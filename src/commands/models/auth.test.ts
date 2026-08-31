@@ -66,6 +66,7 @@ const mocks = vi.hoisted(() => ({
   validateAnthropicSetupToken: vi.fn<() => string | undefined>(() => undefined),
   promoteAuthProfileInOrder: vi.fn(),
   callGateway: vi.fn(),
+  checkCliGatewayStateDir: vi.fn(),
   resolvePluginSetupProviderCore: vi.fn(),
   resolvePluginSetupRegistry: vi.fn(),
   readSecretStoreValue: vi.fn(() => ({
@@ -181,6 +182,10 @@ vi.mock("../../infra/remote-env.js", () => ({
 
 vi.mock("../../gateway/call.js", () => ({
   callGateway: mocks.callGateway,
+}));
+
+vi.mock("../../cli/state-dir-gateway-check.js", () => ({
+  checkCliGatewayStateDir: mocks.checkCliGatewayStateDir,
 }));
 
 vi.mock("../../plugins/provider-oauth-flow.js", () => ({
@@ -437,6 +442,8 @@ describe("modelsAuthLoginCommand", () => {
     ]);
     mocks.callGateway.mockReset();
     mocks.callGateway.mockResolvedValue({});
+    mocks.checkCliGatewayStateDir.mockReset();
+    mocks.checkCliGatewayStateDir.mockResolvedValue({ kind: "match" });
   });
 
   afterEach(() => {
@@ -1257,6 +1264,36 @@ describe("modelsAuthLoginCommand", () => {
     expect(runtime.log).toHaveBeenCalledWith(
       expect.stringContaining('Removed cached auth profiles for provider "openai"'),
     );
+  });
+
+  it("checks state directories before --force purges or provider login", async () => {
+    const runtime = createRuntime();
+    const order: string[] = [];
+    mocks.checkCliGatewayStateDir.mockImplementationOnce(() => {
+      order.push("check");
+      throw new Error("No credentials were written.");
+    });
+    mocks.removeProviderAuthProfilesWithLock.mockImplementationOnce(async () => {
+      order.push("purge");
+      return { version: 1, profiles: {} };
+    });
+    await expect(
+      modelsAuthLoginCommand({ provider: "openai", force: true }, runtime),
+    ).rejects.toThrow("No credentials were written.");
+    expect(order).toEqual(["check"]);
+    expect(mocks.removeProviderAuthProfilesWithLock).not.toHaveBeenCalled();
+    expect(runProviderAuth).not.toHaveBeenCalled();
+  });
+
+  it("passes the mismatch escape hatch to the state-directory check", async () => {
+    const runtime = createRuntime();
+
+    await modelsAuthLoginCommand({ provider: "openai", allowStateDirMismatch: true }, runtime);
+
+    expect(mocks.checkCliGatewayStateDir).toHaveBeenCalledWith(
+      expect.objectContaining({ allowMismatch: true }),
+    );
+    expect(runProviderAuth).toHaveBeenCalledOnce();
   });
 
   it("--force does not purge when omitted", async () => {

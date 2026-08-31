@@ -22,11 +22,13 @@ import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { formatCliCommand } from "./command-format.js";
 import { formatUnsupportedChannelActionMessage } from "./error-format.js";
+import { checkCliGatewayStateDir } from "./state-dir-gateway-check.js";
 
 type ChannelAuthOptions = {
   channel?: string;
   account?: string;
   verbose?: boolean;
+  allowStateDirMismatch?: boolean;
 };
 
 type ChannelPlugin = NonNullable<ReturnType<typeof getChannelPlugin>>;
@@ -267,6 +269,11 @@ export async function runChannelLogin(
   opts: ChannelAuthOptions,
   runtime: RuntimeEnv = defaultRuntime,
 ) {
+  await checkCliGatewayStateDir({
+    allowMismatch: opts.allowStateDirMismatch,
+    command: "openclaw channels login",
+    warn: runtime.log,
+  });
   const resolvedChannel = await resolveChannelPluginForMode(opts, "login", runtime);
   if (!resolvedChannel) {
     return;

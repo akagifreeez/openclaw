@@ -429,6 +429,7 @@ describe("registerChannelsCli", () => {
         "--channel <name>",
         "--account <id>",
         "--name <name>",
+        "--allow-state-dir-mismatch",
       ]);
       expect(listBundledPackageChannelMetadataMock).not.toHaveBeenCalled();
     },
@@ -513,7 +514,7 @@ describe("registerChannelsCli", () => {
         useEnv: false,
       }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
     expect(getChannelAddOptionFlags(program)).not.toContain("--secret-file <path>");
     expect(getChannelAddOptionFlags(program)).not.toContain("--workspace <workspace>");
@@ -586,7 +587,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram" }),
       runtimeMock,
-      { hasFlags: false },
+      expect.objectContaining({ hasFlags: false, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -601,7 +602,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -626,7 +627,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram", token: "test-token" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -658,7 +659,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram", token: "test-token" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -686,7 +687,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram", token: "tok" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -714,7 +715,17 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram", useEnv: true }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
+    );
+  });
+
+  it("passes the state-directory escape hatch to channel add", async () => {
+    await runChannelsAddCli(["channels", "add", "--allow-state-dir-mismatch", "telegram"]);
+
+    expect(channelsAddCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({ allowStateDirMismatch: true }),
+      runtimeMock,
+      expect.objectContaining({ beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -793,7 +804,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "telegram", account: "work", token: "tok" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -838,7 +849,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "signal", signalNumber: "+15555550123" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 
@@ -862,7 +873,7 @@ describe("registerChannelsCli", () => {
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "matrix", homeserver: "https://matrix.example.org" }),
       runtimeMock,
-      { hasFlags: true },
+      expect.objectContaining({ hasFlags: true, beforePersistentEffect: expect.any(Function) }),
     );
   });
 });

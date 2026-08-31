@@ -30,6 +30,7 @@ import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js"
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { parseDurationMs } from "../../cli/parse-duration.js";
+import { checkCliGatewayStateDir } from "../../cli/state-dir-gateway-check.js";
 import { logConfigUpdated } from "../../config/logging.js";
 import { normalizeAgentModelRefForConfig } from "../../config/model-input.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -110,6 +111,13 @@ const select = async <T>(params: Parameters<typeof clackSelect<T>>[0]) =>
   guardCancel(await clackSelect(styleSelectParams(params)));
 
 const MODELS_AUTH_STDIN_MAX_BYTES = 1024 * 1024;
+type StateDirWriteOptions = { allowStateDirMismatch?: boolean };
+const ensureAuthStateDir = (
+  config: OpenClawConfig | undefined,
+  allowMismatch: boolean | undefined,
+  command: string,
+  runtime: RuntimeEnv,
+) => checkCliGatewayStateDir({ config, allowMismatch, command, warn: runtime.log });
 
 async function readPipedStdin(): Promise<string> {
   const bytes = await readByteStreamWithLimit(process.stdin, {
@@ -558,8 +566,18 @@ async function runProviderAuthMethod(params: {
   isRemote?: boolean;
   signal?: AbortSignal;
   openUrl?: (url: string) => Promise<void>;
+  allowStateDirMismatch?: boolean;
+  stateDirCommand?: string;
 }): Promise<{ result: ProviderAuthResult; profiles: ProviderAuthResult["profiles"] }> {
   params.signal?.throwIfAborted();
+  if (params.stateDirCommand) {
+    await ensureAuthStateDir(
+      params.config,
+      params.allowStateDirMismatch,
+      params.stateDirCommand,
+      params.runtime,
+    );
+  }
   const result = await params.method.run({
     config: params.config,
     env: params.env ?? process.env,
@@ -603,7 +621,7 @@ async function runProviderAuthMethod(params: {
 
 /** Runs an interactive provider setup-token auth flow. */
 export async function modelsAuthSetupTokenCommand(
-  opts: { provider?: string; yes?: boolean; agent?: string },
+  opts: { provider?: string; yes?: boolean; agent?: string } & StateDirWriteOptions,
   runtime: RuntimeEnv,
 ) {
   if (!process.stdin.isTTY) {
@@ -656,6 +674,8 @@ export async function modelsAuthSetupTokenCommand(
     method,
     runtime,
     prompter,
+    allowStateDirMismatch: opts.allowStateDirMismatch,
+    stateDirCommand: "openclaw models auth setup-token",
   });
 }
 
@@ -666,9 +686,15 @@ export async function modelsAuthPasteTokenCommand(
     profileId?: string;
     expiresIn?: string;
     agent?: string;
-  },
+  } & StateDirWriteOptions,
   runtime: RuntimeEnv,
 ) {
+  await ensureAuthStateDir(
+    undefined,
+    opts.allowStateDirMismatch,
+    "openclaw models auth paste-token",
+    runtime,
+  );
   const { agentId, agentDir } = await resolveModelsAuthAgent(opts.agent);
   const rawProvider = normalizeOptionalString(opts.provider);
   if (!rawProvider) {
@@ -731,13 +757,15 @@ export async function modelsAuthPasteTokenCommand(
 
 /** Reads a pasted API key and stores it as an auth profile. */
 export async function modelsAuthPasteApiKeyCommand(
-  opts: {
-    provider?: string;
-    profileId?: string;
-    agent?: string;
-  },
+  opts: { provider?: string; profileId?: string; agent?: string } & StateDirWriteOptions,
   runtime: RuntimeEnv,
 ) {
+  await ensureAuthStateDir(
+    undefined,
+    opts.allowStateDirMismatch,
+    "openclaw models auth paste-api-key",
+    runtime,
+  );
   const { agentId, agentDir } = await resolveModelsAuthAgent(opts.agent);
   const rawProvider = normalizeOptionalString(opts.provider);
   if (!rawProvider) {
@@ -785,7 +813,10 @@ export async function modelsAuthPasteApiKeyCommand(
 }
 
 /** Interactive helper for adding token auth profiles, with provider/method prompts. */
-export async function modelsAuthAddCommand(opts: { agent?: string }, runtime: RuntimeEnv) {
+export async function modelsAuthAddCommand(
+  opts: { agent?: string } & StateDirWriteOptions,
+  runtime: RuntimeEnv,
+) {
   const { config, agentId, agentDir, workspaceDir, providers } = await resolveModelsAuthContext({
     rawAgentId: opts.agent,
   });
@@ -848,6 +879,8 @@ export async function modelsAuthAddCommand(opts: { agent?: string }, runtime: Ru
         method,
         runtime,
         prompter,
+        allowStateDirMismatch: opts.allowStateDirMismatch,
+        stateDirCommand: "openclaw models auth add",
       });
       return;
     }
@@ -884,12 +917,18 @@ export async function modelsAuthAddCommand(opts: { agent?: string }, runtime: Ru
     : undefined;
 
   await modelsAuthPasteTokenCommand(
-    { provider: providerId, profileId, expiresIn, agent: opts.agent },
+    {
+      provider: providerId,
+      profileId,
+      expiresIn,
+      agent: opts.agent,
+      allowStateDirMismatch: opts.allowStateDirMismatch,
+    },
     runtime,
   );
 }
 
-type LoginOptions = {
+type LoginOptions = StateDirWriteOptions & {
   provider?: string;
   method?: string;
   profileId?: string;
@@ -1043,6 +1082,12 @@ export async function runModelsAuthLoginFlowCore(
       `Unknown auth method. Run ${formatCliCommand("openclaw models auth login --provider " + selectedProvider.id)} without --method to choose interactively.`,
     );
   }
+  await ensureAuthStateDir(
+    context.config,
+    opts.allowStateDirMismatch,
+    "openclaw models auth login",
+    opts.runtime,
+  );
 
   if (opts.force) {
     // Purge existing profiles for this provider only after we have a valid

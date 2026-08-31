@@ -51,9 +51,10 @@ function loadOnboardChannels(): Promise<OnboardChannelsModule> {
 export type ChannelsAddOptions = {
   channel?: string;
   account?: string;
+  allowStateDirMismatch?: boolean;
 } & Record<string, unknown>;
 
-const CHANNEL_ADD_CONTROL_OPTION_KEYS = new Set(["channel", "account"]);
+const CHANNEL_ADD_CONTROL_OPTION_KEYS = new Set(["channel", "account", "allowStateDirMismatch"]);
 
 async function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | null) {
   const trimmed = normalizeOptionalLowercaseString(raw);

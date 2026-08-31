@@ -3,6 +3,7 @@ import { note } from "../../packages/terminal-core/src/note.js";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { probeGatewayStatus } from "../cli/daemon-cli/probe.js";
+import { checkCliGatewayStateDir } from "../cli/state-dir-gateway-check.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   buildGatewayConnectionDetails,
@@ -11,6 +12,7 @@ import {
   isGatewayCredentialsRequiredError,
 } from "../gateway/call.js";
 import { isGatewaySecretRefUnavailableError } from "../gateway/credentials.js";
+import { ADMIN_SCOPE } from "../gateway/method-scopes.js";
 import type {
   DoctorMemoryEmbeddingRuntimePayload,
   DoctorMemoryStatusPayload,
@@ -85,14 +87,26 @@ export async function checkGatewayHealth(params: {
     typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : 10_000;
   let healthOk = false;
   let status: StatusSummary | undefined;
+  let gatewayStateDir: string | undefined;
   try {
     status = await callGateway<StatusSummary>({
       method: "status",
       params: { includeChannelSummary: false },
       timeoutMs,
       config: params.cfg,
+      scopes: [ADMIN_SCOPE],
+      onHelloOk: (hello) => {
+        gatewayStateDir = hello.snapshot.stateDir;
+      },
     });
     healthOk = true;
+    await checkCliGatewayStateDir({
+      config: params.cfg,
+      timeoutMs,
+      gatewayStateDir,
+      gatewayStatus: "success",
+      warn: (message) => note(message, "Gateway state directory"),
+    });
     noteCliGatewayVersionSkew(status);
     const secretDegradations = projectDoctorSecretRuntimeDegradations(status);
     if (secretDegradations.length > 0) {
@@ -168,6 +182,12 @@ export async function checkGatewayHealth(params: {
     }
     return { healthOk, authenticated: true, status };
   } catch (err) {
+    await checkCliGatewayStateDir({
+      config: params.cfg,
+      timeoutMs,
+      gatewayStatus: "failure",
+      warn: (message) => note(message, "Gateway state directory"),
+    });
     if (gatewayConnectErrorWasRateLimited(err)) {
       note(GATEWAY_HEALTH_RATE_LIMITED_MESSAGE, GATEWAY_HEALTH_RATE_LIMITED_TITLE);
       return { healthOk: true, authenticated: false };

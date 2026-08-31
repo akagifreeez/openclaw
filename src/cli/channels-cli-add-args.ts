@@ -12,7 +12,7 @@ export type ChannelSetupCliOption = {
   defaultValue?: boolean | string;
 };
 
-const CHANNEL_ADD_SHARED_BOOLEAN_OPTIONS = new Set(["--help", "-h"]);
+const CHANNEL_ADD_SHARED_BOOLEAN_OPTIONS = new Set(["--help", "-h", "--allow-state-dir-mismatch"]);
 const CHANNEL_ADD_SHARED_VALUE_OPTIONS = new Set(["--channel", "--account", "--name"]);
 const CHANNEL_ADD_SHARED_VALUE_OPTION_PREFIXES = ["--channel=", "--account=", "--name="];
 

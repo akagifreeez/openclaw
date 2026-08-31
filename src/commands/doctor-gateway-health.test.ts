@@ -15,6 +15,7 @@ const isGatewayCredentialsRequiredError = vi.hoisted(() => vi.fn(() => false));
 const isGatewayTransportError = vi.hoisted(() => vi.fn((_value: unknown) => false));
 const isGatewaySecretRefUnavailableError = vi.hoisted(() => vi.fn(() => false));
 const probeGatewayStatus = vi.hoisted(() => vi.fn());
+const checkCliGatewayStateDir = vi.hoisted(() => vi.fn());
 const note = vi.hoisted(() => vi.fn());
 const TEST_GATEWAY_URL = "ws://127.0.0.1:18789";
 const TEST_AUTH_CLOSE_ERROR = "gateway closed (1008):";
@@ -43,6 +44,10 @@ vi.mock("../cli/daemon-cli/probe.js", () => ({
   probeGatewayStatus,
 }));
 
+vi.mock("../cli/state-dir-gateway-check.js", () => ({
+  checkCliGatewayStateDir,
+}));
+
 vi.mock("../../packages/terminal-core/src/note.js", () => ({
   note,
 }));
@@ -65,6 +70,8 @@ describe("checkGatewayHealth", () => {
     isGatewaySecretRefUnavailableError.mockReset();
     isGatewaySecretRefUnavailableError.mockReturnValue(false);
     probeGatewayStatus.mockReset();
+    checkCliGatewayStateDir.mockReset();
+    checkCliGatewayStateDir.mockResolvedValue({ kind: "match" });
     note.mockReset();
   });
 
@@ -76,12 +83,17 @@ describe("checkGatewayHealth", () => {
       checkGatewayHealth({ runtime: runtime as never, cfg, timeoutMs: 3000 }),
     ).resolves.toEqual({ authenticated: true, healthOk: true, status: { ok: true } });
 
-    expect(callGateway).toHaveBeenNthCalledWith(1, {
-      method: "status",
-      params: { includeChannelSummary: false },
-      timeoutMs: 3000,
-      config: cfg,
-    });
+    expect(callGateway).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        method: "status",
+        params: { includeChannelSummary: false },
+        timeoutMs: 3000,
+        config: cfg,
+        scopes: ["operator.admin"],
+        onHelloOk: expect.any(Function),
+      }),
+    );
     expect(callGateway).toHaveBeenNthCalledWith(2, {
       method: "channels.status",
       params: { probe: true, timeoutMs: 5000 },
@@ -211,6 +223,34 @@ describe("checkGatewayHealth", () => {
     expect(mismatchOutput).toContain("Check `openclaw --version`, `which openclaw`");
     expect(mismatchOutput).toContain(
       "If this mismatch is unexpected, update PATH so `openclaw` points to the version you want",
+    );
+  });
+
+  it("warns when the live Gateway uses another state directory", async () => {
+    checkCliGatewayStateDir.mockImplementationOnce(
+      async (params: { warn?: (message: string) => void }) => {
+        params.warn?.(
+          "CLI and live Gateway use different state directories. CLI: /tmp/cli-state; Gateway: /tmp/gateway-state.",
+        );
+        return {
+          kind: "mismatch",
+          cliStateDir: "/tmp/cli-state",
+          gatewayStateDir: "/tmp/gateway-state",
+        };
+      },
+    );
+    callGateway.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({});
+    const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+
+    await expect(
+      checkGatewayHealth({ runtime: runtime as never, cfg, timeoutMs: 3000 }),
+    ).resolves.toMatchObject({ healthOk: true, authenticated: true });
+
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "CLI and live Gateway use different state directories. CLI: /tmp/cli-state; Gateway: /tmp/gateway-state.",
+      ),
+      "Gateway state directory",
     );
   });
 

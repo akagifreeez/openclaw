@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   commitConfigWithPendingPluginInstalls: vi.fn(),
   setVerbose: vi.fn(),
   callGateway: vi.fn(),
+  checkCliGatewayStateDir: vi.fn(),
   createClackPrompter: vi.fn(),
   ensureChannelSetupPluginInstalled: vi.fn(),
   loadChannelSetupPluginRegistrySnapshotForChannel: vi.fn(),
@@ -66,6 +67,10 @@ vi.mock("../globals.js", () => ({
 
 vi.mock("../gateway/call.js", () => ({
   callGateway: mocks.callGateway,
+}));
+
+vi.mock("./state-dir-gateway-check.js", () => ({
+  checkCliGatewayStateDir: mocks.checkCliGatewayStateDir,
 }));
 
 vi.mock("../plugins/install-record-commit.js", () => ({
@@ -192,6 +197,7 @@ describe("channel-auth", () => {
       },
     );
     mocks.callGateway.mockResolvedValue({ cleared: true, loggedOut: true });
+    mocks.checkCliGatewayStateDir.mockResolvedValue({ kind: "match" });
     mocks.listChannelPlugins.mockReturnValue([plugin]);
     mocks.resolveDefaultAgentId.mockReturnValue("main");
     mocks.resolveAgentWorkspaceDir.mockReturnValue("/tmp/workspace");
@@ -241,6 +247,24 @@ describe("channel-auth", () => {
       expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
     },
   );
+
+  it("checks state directories before channel login writes", async () => {
+    mocks.checkCliGatewayStateDir.mockRejectedValueOnce(new Error("No credentials were written."));
+
+    await expect(runChannelLogin({ channel: "whatsapp" }, runtime)).rejects.toThrow(
+      "No credentials were written.",
+    );
+    expect(mocks.login).not.toHaveBeenCalled();
+  });
+
+  it("passes the mismatch escape hatch to channel login", async () => {
+    await runChannelLogin({ channel: "whatsapp", allowStateDirMismatch: true }, runtime);
+
+    expect(mocks.checkCliGatewayStateDir).toHaveBeenCalledWith(
+      expect.objectContaining({ allowMismatch: true }),
+    );
+    expect(mocks.login).toHaveBeenCalledOnce();
+  });
 
   it.each([
     ["login", runChannelLogin, mocks.login],

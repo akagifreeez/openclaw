@@ -1230,6 +1230,38 @@ describe("channelsAddCommand", () => {
     });
   });
 
+  it("stops before config commit when the state-directory guard rejects", async () => {
+    const applyAccountConfig = vi.fn(({ cfg }: { cfg: OpenClawConfig }) => cfg);
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "ordered-chat",
+          plugin: {
+            ...createChannelTestPluginBase({ id: "ordered-chat", label: "Ordered Chat" }),
+            setup: { applyAccountConfig },
+          } as ChannelPlugin,
+          source: "test",
+        },
+      ]),
+    );
+    configMocks.readConfigFileSnapshot.mockResolvedValue({ ...baseConfigSnapshot });
+    const beforePersistentEffect = vi.fn(async () => {
+      throw new Error("state directory mismatch");
+    });
+
+    await expect(
+      channelsAddCommand({ channel: "ordered-chat", token: "credential" }, runtime, {
+        hasFlags: true,
+        beforePersistentEffect,
+      }),
+    ).rejects.toThrow("state directory mismatch");
+    expect(beforePersistentEffect).toHaveBeenCalledOnce();
+    expect(applyAccountConfig).toHaveBeenCalledOnce();
+    expect(
+      pluginInstallRecordCommitMocks.commitConfigWithPendingPluginInstalls,
+    ).not.toHaveBeenCalled();
+  });
+
   it("loads external channel setup snapshots for newly installed and existing plugins", async () => {
     configMocks.readConfigFileSnapshot.mockResolvedValue({ ...baseConfigSnapshot });
     setActivePluginRegistry(createTestRegistry());

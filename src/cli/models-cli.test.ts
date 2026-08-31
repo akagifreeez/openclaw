@@ -536,6 +536,15 @@ describe("models cli", () => {
     });
   });
 
+  it.each([
+    ["parent", ["models", "auth", "--allow-state-dir-mismatch", "login"]],
+    ["leaf", ["models", "auth", "login", "--allow-state-dir-mismatch"]],
+  ] as const)("passes the state-directory escape hatch from the %s", async (_label, args) => {
+    await runModelsCommand(args);
+
+    expectCommandOptions(modelsAuthLoginCommand, { allowStateDirMismatch: true });
+  });
+
   it("maps --device-code to the provider device-code auth method", async () => {
     await runModelsCommand(["models", "auth", "login", "--provider", "openai", "--device-code"]);
 
