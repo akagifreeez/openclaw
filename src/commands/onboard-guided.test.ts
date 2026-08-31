@@ -977,7 +977,7 @@ describe("runGuidedOnboarding", () => {
 
     await runGuidedOnboarding({ acceptRisk: true, workspace: "/tmp/work" }, runtime, deps);
 
-    expect(select).toHaveBeenCalledTimes(2);
+    expect(select).toHaveBeenCalledTimes(3);
     expect(deps.activate).not.toHaveBeenCalled();
     expect(deps.runSystemAgentChat).not.toHaveBeenCalled();
     expect(deps.launchHatchTui).not.toHaveBeenCalled();
@@ -1058,7 +1058,7 @@ describe("runGuidedOnboarding", () => {
     const deps = setupDeps({ prompter });
     const runtime = makeRuntime();
 
-    await runGuidedOnboarding({}, runtime, deps);
+    await runGuidedOnboarding({ tui: true }, runtime, deps);
 
     expect(runtime.exit).toHaveBeenCalledWith(1);
     expect(deps.detect).not.toHaveBeenCalled();
