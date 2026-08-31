@@ -540,7 +540,7 @@ describe("models cli", () => {
     ["parent", ["models", "auth", "--allow-state-dir-mismatch", "login"]],
     ["leaf", ["models", "auth", "login", "--allow-state-dir-mismatch"]],
   ] as const)("passes the state-directory escape hatch from the %s", async (_label, args) => {
-    await runModelsCommand(args);
+    await runModelsCommand([...args]);
 
     expectCommandOptions(modelsAuthLoginCommand, { allowStateDirMismatch: true });
   });
