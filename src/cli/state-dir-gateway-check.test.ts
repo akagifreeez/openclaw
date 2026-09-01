@@ -153,23 +153,38 @@ describe("state-dir-gateway-check", () => {
   });
 
   it("warns but allows a write when only the configured service target differs", async () => {
-    const serviceDir = path.join(root, "service");
+    const serviceDir = path.join(root, "service dir's");
+    const serviceConfigPath = path.join(root, "gateway config's.json");
     await fs.mkdir(serviceDir);
     mocks.callGateway.mockRejectedValue(new Error("ECONNREFUSED"));
+    mocks.probeGateway.mockResolvedValue({ ok: false, gatewayReached: true });
     mocks.readGatewayServiceState.mockResolvedValue({
       installed: true,
-      env: { OPENCLAW_STATE_DIR: serviceDir },
+      env: {
+        OPENCLAW_STATE_DIR: serviceDir,
+        OPENCLAW_CONFIG_PATH: serviceConfigPath,
+      },
     });
     const warn = vi.fn();
 
     await expect(
-      checkCliGatewayStateDir({ config: {}, command: "openclaw models auth paste-token", warn }),
+      checkCliGatewayStateDir({
+        config: {},
+        command: "openclaw models auth paste-token",
+        allowMismatch: true,
+        warn,
+      }),
     ).resolves.toMatchObject({ kind: "unavailable" });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("configured service target"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `OPENCLAW_STATE_DIR='${path.join(root, "service dir")}'\\''s' OPENCLAW_CONFIG_PATH='${path.join(root, "gateway config")}'\\''s.json' openclaw doctor`,
+      ),
+    );
   });
 
   it("refuses a write when a credential preflight fails but the probe reaches a divergent gateway", async () => {
-    const serviceDir = path.join(root, "service");
+    const serviceDir = path.join(root, "service dir's");
+    const serviceConfigPath = path.join(root, "gateway config's.json");
     await fs.mkdir(serviceDir);
     mocks.callGateway.mockRejectedValue(
       new GatewayCredentialsRequiredError({
@@ -180,7 +195,10 @@ describe("state-dir-gateway-check", () => {
     mocks.probeGateway.mockResolvedValue({ ok: false, gatewayReached: true });
     mocks.readGatewayServiceState.mockResolvedValue({
       installed: true,
-      env: { OPENCLAW_STATE_DIR: serviceDir },
+      env: {
+        OPENCLAW_STATE_DIR: serviceDir,
+        OPENCLAW_CONFIG_PATH: serviceConfigPath,
+      },
     });
 
     const check = checkCliGatewayStateDir({
@@ -190,7 +208,7 @@ describe("state-dir-gateway-check", () => {
     });
     await expect(check).rejects.toThrow("No credentials were written.");
     await expect(check).rejects.toThrow(
-      `OPENCLAW_STATE_DIR=${serviceDir} OPENCLAW_CONFIG_PATH=${path.join(serviceDir, "openclaw.json")} openclaw models auth paste-token, or pass --allow-state-dir-mismatch`,
+      `OPENCLAW_STATE_DIR='${path.join(root, "service dir")}'\\''s' OPENCLAW_CONFIG_PATH='${path.join(root, "gateway config")}'\\''s.json' openclaw models auth paste-token, or pass --allow-state-dir-mismatch`,
     );
     expect(mocks.probeGateway).toHaveBeenCalledWith(
       expect.objectContaining({

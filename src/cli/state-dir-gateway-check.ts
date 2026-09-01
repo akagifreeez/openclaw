@@ -7,6 +7,7 @@ import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
 import type { GatewayClientOptions } from "../gateway/client.js";
 import { ADMIN_SCOPE } from "../gateway/method-scopes.js";
 import { clampProbeTimeoutMs, probeGateway } from "../gateway/probe.js";
+import { quoteShellArgument } from "./quote-cli-arg.js";
 
 type GatewayHello = Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0];
 
@@ -74,12 +75,12 @@ export function compareCliGatewayStateDirs(params: {
   const gatewayConfig = gatewayConfigPath ?? path.join(result.gatewayStateDir, "openclaw.json");
   if (params.gatewayReachable && params.command && !params.allowMismatch) {
     throw new Error(
-      `No credentials were written. ${differences}. Fix: rerun with OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} ${params.command}, or pass --allow-state-dir-mismatch to write here anyway.`,
+      `No credentials were written. ${differences}. Fix: rerun with OPENCLAW_STATE_DIR=${quoteShellArgument(result.gatewayStateDir)} OPENCLAW_CONFIG_PATH=${quoteShellArgument(gatewayConfig)} ${params.command}, or pass --allow-state-dir-mismatch to write here anyway.`,
     );
   }
   params.warn?.(
     params.gatewayReachable
-      ? `CLI and live Gateway use different ${differences}. The CLI may read or write a store or config file the Gateway does not use. Fix: run OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} openclaw doctor, then rerun openclaw gateway status --deep.`
+      ? `CLI and live Gateway use different ${differences}. The CLI may read or write a store or config file the Gateway does not use. Fix: run OPENCLAW_STATE_DIR=${quoteShellArgument(result.gatewayStateDir)} OPENCLAW_CONFIG_PATH=${quoteShellArgument(gatewayConfig)} openclaw doctor, then rerun openclaw gateway status --deep.`
       : `Gateway is unavailable. CLI and the configured service target use different ${differences}; this is not live proof.`,
   );
   return result;

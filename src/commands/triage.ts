@@ -5,6 +5,7 @@ import path from "node:path";
 import { tryResolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 import { resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
 import { callGatewayFromCliWithTransport } from "../cli/gateway-rpc.js";
+import { quoteShellArgument } from "../cli/quote-cli-arg.js";
 import { resolveSubprocessExitCode } from "../cli/subprocess-exit-code.js";
 import { readConfigFileSnapshot } from "../config/config.js";
 import { scrubDoctorErrorMessage } from "../flows/doctor-error-message.js";
@@ -70,10 +71,6 @@ function resolveTriageHandoff(options: TriageOptions): TriageHandoffMode {
     return { kind: "embedded" };
   }
   return process.stdin.isTTY && process.stdout.isTTY ? { kind: "offer" } : { kind: "print" };
-}
-
-function quoteShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /** Collect read-only diagnostics, write the bounded prompt, and optionally run one agent turn. */
