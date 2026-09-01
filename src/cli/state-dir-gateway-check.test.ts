@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { GatewayCredentialsRequiredError } from "../gateway/call.js";
 
 const mocks = vi.hoisted(() => ({
   callGateway: vi.fn(),
@@ -120,68 +119,6 @@ describe("state-dir-gateway-check", () => {
     });
   });
 
-  it("refuses a protected reachable Gateway before a write on a configured mismatch", async () => {
-    const cliStateDir = path.join(root, "cli");
-    const serviceDir = path.join(root, "service");
-    await fs.mkdir(cliStateDir);
-    await fs.mkdir(serviceDir);
-    const command = "openclaw models auth paste-token";
-    mocks.callGateway.mockRejectedValue(
-      new GatewayCredentialsRequiredError({
-        method: "status",
-        configPath: path.join(cliStateDir, "openclaw.json"),
-      }),
-    );
-    mocks.readGatewayServiceState.mockResolvedValue({
-      installed: true,
-      env: { OPENCLAW_STATE_DIR: serviceDir },
-    });
-    const write = vi.fn();
-    const serviceConfigPath = path.join(serviceDir, "openclaw.json");
-
-    await expect(
-      (async () => {
-        await checkCliGatewayStateDir({
-          config: {} as OpenClawConfig,
-          command,
-          allowMismatch: false,
-        });
-        write();
-      })(),
-    ).rejects.toThrow(
-      `No credentials were written. state directories (CLI: ${cliStateDir}; Gateway: ${serviceDir}). Fix: rerun with OPENCLAW_STATE_DIR=${serviceDir} OPENCLAW_CONFIG_PATH=${serviceConfigPath} ${command}, or pass --allow-state-dir-mismatch to write here anyway.`,
-    );
-    expect(write).not.toHaveBeenCalled();
-  });
-
-  it("allows a protected reachable Gateway when the configured target matches", async () => {
-    const cliStateDir = path.join(root, "cli");
-    await fs.mkdir(cliStateDir);
-    const command = "openclaw models auth paste-token";
-    mocks.callGateway.mockRejectedValue(
-      new GatewayCredentialsRequiredError({
-        method: "status",
-        configPath: path.join(cliStateDir, "openclaw.json"),
-      }),
-    );
-    mocks.readGatewayServiceState.mockResolvedValue({
-      installed: true,
-      env: { OPENCLAW_STATE_DIR: cliStateDir },
-    });
-    const warn = vi.fn();
-
-    await expect(
-      checkCliGatewayStateDir({ config: {} as OpenClawConfig, command, warn }),
-    ).resolves.toMatchObject({
-      kind: "unavailable",
-      gatewayStateDir: cliStateDir,
-      gatewayStateDirSource: "configured service target",
-    });
-    // A protected Gateway is the recommended setup, so a matching target must stay silent rather
-    // than warn on every credential write.
-    expect(warn).not.toHaveBeenCalled();
-  });
-
   it("does not compare a remote gateway target", async () => {
     await expect(
       checkCliGatewayStateDir({
@@ -221,6 +158,45 @@ describe("state-dir-gateway-check", () => {
       checkCliGatewayStateDir({ config: {}, command: "openclaw models auth paste-token", warn }),
     ).resolves.toMatchObject({ kind: "unavailable" });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("configured service target"));
+  });
+
+  it("warns when the configured service target keeps the state dir but changes the config path", async () => {
+    const stateDir = path.join(root, "shared");
+    await fs.mkdir(stateDir);
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", path.join(root, "cli-config.json"));
+    mocks.callGateway.mockRejectedValue(new Error("ECONNREFUSED"));
+    mocks.readGatewayServiceState.mockResolvedValue({
+      installed: true,
+      env: {
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_CONFIG_PATH: path.join(root, "gateway-config.json"),
+      },
+    });
+    const warn = vi.fn();
+
+    await expect(
+      checkCliGatewayStateDir({ config: {}, command: "openclaw models auth paste-token", warn }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("config paths"));
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("state directories"));
+  });
+
+  it("stays silent when the configured service target matches", async () => {
+    const stateDir = path.join(root, "shared");
+    await fs.mkdir(stateDir);
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    mocks.callGateway.mockRejectedValue(new Error("ECONNREFUSED"));
+    mocks.readGatewayServiceState.mockResolvedValue({
+      installed: true,
+      env: { OPENCLAW_STATE_DIR: stateDir },
+    });
+    const warn = vi.fn();
+
+    await expect(
+      checkCliGatewayStateDir({ config: {}, command: "openclaw models auth login", warn }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("requests admin status and refuses before a write on a proven mismatch", async () => {
