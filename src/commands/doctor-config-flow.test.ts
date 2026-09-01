@@ -1798,6 +1798,7 @@ describe("doctor config flow", () => {
   it("stamps explicit ownership when Doctor migrates a markerless multi-agent list", async () => {
     const rawConfig = {
       agents: {
+        defaults: { workspace: "/srv/legacy-shared" },
         list: [{ id: "ops" }, { id: "research", model: "openai/research" }],
       },
     };
@@ -1814,9 +1815,10 @@ describe("doctor config flow", () => {
       ["agents", "ownership"],
     ]);
     expect(result.cfg.agents).toEqual({
+      defaults: { workspace: "/srv/legacy-shared" },
       ownership: "explicit",
       entries: {
-        ops: {},
+        ops: { workspace: "/srv/legacy-shared" },
         research: { model: "openai/research" },
       },
     });
