@@ -116,6 +116,72 @@ describe("custodian page session lifecycle", () => {
     },
   );
 
+  it.each(["submit", "cancel", "option", "wizard submit", "wizard cancel"])(
+    "clears sensitive input when %s is admitted even if its reply fails",
+    async (action) => {
+      const wizard = action.startsWith("wizard");
+      let rejectReply!: (error: Error) => void;
+      const reply = new Promise<never>((_resolve, reject) => {
+        rejectReply = reject;
+      });
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({
+          sessionId: "sensitive-error-session",
+          reply: "Enter a credential.",
+          ...(wizard
+            ? {
+                wizardInputPending: true,
+                step: { id: "credential", type: "text", message: "Credential", sensitive: true },
+              }
+            : {
+                sensitive: true,
+                question: {
+                  id: "credential",
+                  header: "Credential",
+                  question: "Enter a credential or choose another method.",
+                  options: [{ label: "Use environment" }, { label: "Configure later" }],
+                },
+              }),
+        })
+        .mockImplementationOnce(() => reply);
+      const { context } = createContext(request);
+      const { page } = await mountPage(context);
+      const password = await waitForFast(() => {
+        const field = page.querySelector<HTMLInputElement>('input[type="password"]');
+        expect(field).not.toBeNull();
+        return field!;
+      });
+      const secret = "test-token-placeholder";
+      password.value = secret;
+      password.dispatchEvent(new Event("input"));
+      await page.updateComplete;
+      const selector = {
+        submit: ".chat-send-btn",
+        cancel: ".option-card__skip",
+        option: ".option-card__choice",
+        "wizard submit": ".custodian__wizard-step .btn.primary",
+        "wizard cancel": ".custodian__wizard-cancel",
+      }[action]!;
+      page.querySelector<HTMLButtonElement>(selector)!.click();
+      await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+      await page.updateComplete;
+      expect.soft(page.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
+
+      rejectReply(new Error("Temporary request failure."));
+      await waitForFast(() => expect(page.textContent).toContain("Temporary request failure."));
+      expect(page.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
+      expect(page.textContent).not.toContain(secret);
+      expect(request).toHaveBeenCalledTimes(2);
+      const sent = request.mock.calls[1]?.[1];
+      if (action.includes("submit")) {
+        expect(sent.message ?? sent.wizardAnswer?.value).toBe(secret);
+      } else {
+        expect(JSON.stringify(sent)).not.toContain(secret);
+      }
+    },
+  );
+
   it.each([
     { prompt: "composer", invalidated: false },
     { prompt: "composer", invalidated: true },

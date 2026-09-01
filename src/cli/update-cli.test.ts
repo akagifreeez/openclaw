@@ -5207,6 +5207,42 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()).toBeUndefined();
   });
 
+  it.each(["preparation", "final ancestry recheck"])(
+    "reports a Git service refusal during %s without an unsafe recovery verdict",
+    async (phase) => {
+      mockRunningManagedGateway();
+      const preparations = mockGitUpdateAfterMutation();
+      mockGetSelfAndAncestorPidsSync.mockReturnValue(
+        new Set<number>([process.pid, gatewayFixturePid]),
+      );
+      if (phase === "final ancestry recheck") {
+        mockGetSelfAndAncestorPidsSync.mockReturnValueOnce(new Set<number>([process.pid]));
+      }
+
+      await invokeUpdateCli({ yes: true, json: true });
+
+      expect(vi.mocked(runUpdateFailureTriage).mock.calls[0]?.[0].failure).toMatchObject({
+        result: {
+          status: "error",
+          reason: "managed-service-preflight",
+          recovery: { serviceRestartSafe: true },
+          steps: [
+            expect.objectContaining({
+              stderrTail: expect.stringContaining(
+                `Gateway PID ${gatewayFixturePid} is an ancestor`,
+              ),
+            }),
+          ],
+        },
+      });
+      expect(preparations).toEqual([]);
+      expectNoSideEffects(serviceStop, serviceStart, serviceRestart);
+      expect(freshRestartCalls()).toHaveLength(0);
+      expect(getErrorOutput()).not.toContain("Update recovery is unverified");
+      expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    },
+  );
+
   it("refuses package updates from inherited gateway runtime pid when process ancestry is truncated", async () => {
     mockPackageInstallStatus(createCaseDir("openclaw-update"));
     serviceLoaded.mockResolvedValue(true);

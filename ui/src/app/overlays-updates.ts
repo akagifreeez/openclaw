@@ -5,6 +5,7 @@ import { controlUiBuildDiffersFrom } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
 import { formatUiError } from "../lib/format-error.ts";
 import { generateUUID } from "../lib/uuid.ts";
+import type { ConnectionBootstrapCoordinator } from "./connection-bootstrap.ts";
 import type { ApplicationGateway } from "./gateway.ts";
 import { readGatewayOperatorAccess } from "./operator-access.ts";
 import type { ApplicationUpdateOverlaySnapshot } from "./overlays-types.ts";
@@ -34,6 +35,7 @@ import {
 import { createUpdateNoticeSession } from "./update-success-notice.ts";
 
 export type ApplicationUpdateOverlayHooks = {
+  connectionBootstrap?: ConnectionBootstrapCoordinator;
   /** Barrier awaited after update-running is published and before update.run
    * is issued, so in-flight config writes cannot overlap the install. */
   drainConfigWrites?: () => Promise<void>;
@@ -297,6 +299,8 @@ export function createApplicationUpdateOverlays(
       operatorAccess.canAdmin,
     refresh: () => refreshUpdateStatus("background"),
   });
+  const runConnectionBootstrap = (key: string, task: () => Promise<unknown>) =>
+    hooks.connectionBootstrap?.run(key, task) ?? task();
 
   const synchronizeGateway = (next: ApplicationGateway["snapshot"]) => {
     const nextGatewayScope = gatewayCredentialScope(gateway.connection.gatewayUrl);
@@ -370,6 +374,7 @@ export function createApplicationUpdateOverlays(
       publish();
       return;
     }
+    const connectedClient = next.client;
     if (
       pendingUpdate &&
       (!operatorAccess.canAdmin || pendingUpdate.profileId !== (next.selfUser?.id ?? null))
@@ -405,11 +410,15 @@ export function createApplicationUpdateOverlays(
       }
       presentFailureTriage();
       if (pendingUpdate && operatorAccess.canAdmin) {
-        void updateVerification.verify(next.client, connectedEpoch);
+        void runConnectionBootstrap("update-verification", () =>
+          updateVerification.verify(connectedClient, connectedEpoch),
+        ).catch(() => undefined);
       } else if (operatorAccess.canAdmin && !snapshot.updateSchedule?.campaign) {
         // A new bundle has no in-memory campaign history. Hydrate the Gateway's
         // retained result so an automatic update failure survives that reload.
-        void refreshUpdateStatus("background");
+        void runConnectionBootstrap("update-status", () => refreshUpdateStatus("background")).catch(
+          () => undefined,
+        );
       }
     }
   };

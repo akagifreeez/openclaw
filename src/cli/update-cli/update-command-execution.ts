@@ -118,7 +118,7 @@ export async function executeMutableUpdate(params: {
         }
       }
     } catch (err) {
-      if (err instanceof UpdateCommandAbort) {
+      if (err instanceof UpdateCommandAbort || err instanceof UpdatePreMutationError) {
         throw err;
       }
       params.stop();
@@ -151,7 +151,8 @@ export async function executeMutableUpdate(params: {
     if (shouldBlockMutableUpdateFromGatewayServiceEnv({ preManagedServiceStop })) {
       params.stop();
       const updateLabel = params.updateInstallKind === "git" ? "Git updates" : "Package updates";
-      throw new Error(
+      throw new UpdatePreMutationError(
+        "managed-service-preflight",
         [
           `${updateLabel} cannot run from inside the gateway service process.`,
           "That path replaces the active OpenClaw dist tree while the live gateway may still lazy-load old chunks.",
@@ -162,7 +163,10 @@ export async function executeMutableUpdate(params: {
 
     if (preManagedServiceStop?.blockMessage) {
       params.stop();
-      throw new Error(preManagedServiceStop.blockMessage);
+      throw new UpdatePreMutationError(
+        "managed-service-preflight",
+        preManagedServiceStop.blockMessage,
+      );
     }
   };
 

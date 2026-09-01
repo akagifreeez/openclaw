@@ -46,7 +46,7 @@ import {
   consumeCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
-import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
+import { CodexAppServerRpcError, CodexAppServerClient } from "./client.js";
 import {
   readCodexPluginConfig,
   resolveCodexAppServerRuntimeOptions,
@@ -120,7 +120,7 @@ import {
 } from "./session-binding.test-helpers.js";
 import * as sharedClientModule from "./shared-client.js";
 import type { CodexAppServerClientOptions } from "./shared-client.js";
-import { createCodexTestModel } from "./test-support.js";
+import { createClientHarness, createCodexTestModel } from "./test-support.js";
 import {
   buildDeveloperInstructions,
   buildTurnStartParams,
@@ -6990,7 +6990,26 @@ describe("runCodexAppServerAttempt", () => {
   });
 
   it("uses a supervised native model for review policy despite an outer Anthropic default", async () => {
-    const { sessionFile, workspaceDir } = createRunPaths();
+    const { sessionFile, workspaceDir, agentDir } = createRunPaths();
+    const codexHome = path.join(tempDir, "review-codex-home");
+    vi.stubEnv("CODEX_HOME", codexHome);
+    const rolloutPath = path.join(codexHome, "sessions", "thread-existing.jsonl");
+    await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
+    await fs.writeFile(
+      rolloutPath,
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: "thread-existing", model_provider: "openai", dynamic_tools: [] },
+      }) + "\n",
+    );
+    const pluginConfig = {
+      appServer: {
+        mode: "guardian",
+        command: process.execPath,
+        args: ["app-server"],
+      },
+      supervision: { enabled: true },
+    };
     await writeExistingBinding(sessionFile, workspaceDir, {
       connectionScope: "supervision",
       supervisionSourceThreadId: "thread-existing",
@@ -6998,32 +7017,65 @@ describe("runCodexAppServerAttempt", () => {
       modelProvider: "openai",
       preserveNativeModel: true,
       conversationSourceTransferComplete: true,
+      dynamicToolsFingerprint: codexDynamicToolsFingerprint([]),
+      rolloutPath,
+      appServerRuntimeFingerprint: buildCodexAppServerConnectionFingerprint(
+        resolveCodexSupervisionAppServerRuntimeOptions({ pluginConfig }),
+        agentDir,
+      ),
     });
-    const nativeResponse = threadStartResult("thread-existing");
-    nativeResponse.model = "gpt-5.5";
-    nativeResponse.modelProvider = "openai";
-    nativeResponse.thread.modelProvider = "openai";
-    const harness = createAppServerHarness(async (method) => {
-      if (method === "config/read") {
-        return { config: { model_provider: "openai" }, origins: {} };
-      }
-      if (method === "thread/read") {
-        return { thread: nativeResponse.thread };
-      }
-      if (method === "thread/resume") {
-        return nativeResponse;
-      }
-      if (method === "turn/start") {
-        return turnStartResult();
-      }
-      return {};
+    const nativeResponse = {
+      ...threadStartResult("thread-existing", { cwd: workspaceDir }),
+      model: "gpt-5.5",
+      modelProvider: "openai",
+      approvalsReviewer: "auto_review",
+      serviceTier: "priority",
+    };
+    const turnStarted = createDeferred<void>();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const harness = createClientHarness({
+      onWrite: (line, send) => {
+        const message: unknown = JSON.parse(line);
+        if (
+          !isJsonObject(message) ||
+          typeof message.method !== "string" ||
+          message.id === undefined
+        ) {
+          return;
+        }
+        requests.push({ method: message.method, params: message.params });
+        let result: unknown = {};
+        if (message.method === "initialize") {
+          result = { userAgent: `codex-cli/${getMockRuntimeIdentity().serverVersion}`, codexHome };
+        } else if (message.method === "config/read") {
+          result = { config: { model_provider: "openai" }, origins: {} };
+        } else if (message.method === "thread/read") {
+          result = { thread: { ...nativeResponse.thread, path: rolloutPath } };
+        } else if (message.method === "thread/resume") {
+          // Native resume tears down an idle, unsubscribed thread before applying overrides.
+          // A successful response alone cannot prove that its configuration changed.
+          send({
+            method: "thread/status/changed",
+            params: { threadId: "thread-existing", status: { type: "notLoaded" } },
+          });
+          result = nativeResponse;
+        } else if (message.method === "turn/start") {
+          result = turnStartResult();
+          turnStarted.resolve();
+        } else if (message.method === "thread/unsubscribe") {
+          result = { status: "unsubscribed" };
+        }
+        send({ id: message.id, result });
+      },
     });
-    const clientFactory = vi.fn(async () => harness.client);
+    const start = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
+    const clientFactory = vi.fn(sharedClientModule.getLeasedSharedCodexAppServerClient);
     testing.setOpenClawCodingToolsFactoryForTests(() => []);
     // This test owns review-policy projection, not requester-scoped MCP discovery.
     agentHarnessRuntimeMocks.forceModelToolsUnsupported = true;
     agentHarnessRuntimeMocks.skipRequesterScopedMcpMaterialization = true;
     const params = createParams(sessionFile, workspaceDir);
+    params.agentDir = agentDir;
     params.provider = "anthropic";
     params.modelId = "claude-opus-4-6";
     params.model = createCodexTestModel("anthropic");
@@ -7034,28 +7086,42 @@ describe("runCodexAppServerAttempt", () => {
       tools: { ...params.config?.tools, exec: { mode: "auto" } },
     } as EmbeddedRunAttemptParams["config"];
     const run = runCodexAppServerAttempt(params, {
-      pluginConfig: {
-        appServer: { mode: "guardian" },
-        supervision: { enabled: true },
-      },
+      pluginConfig,
       clientFactory,
     });
-    await harness.waitForMethod("turn/start");
-    await harness.completeTurn({ threadId: "thread-existing", turnId: "turn-1" });
-    await run;
+    try {
+      await Promise.race([
+        turnStarted.promise,
+        run.then((result) => {
+          throw new Error("Codex attempt ended before turn/start", { cause: result });
+        }),
+      ]);
+      harness.send({
+        method: "turn/completed",
+        params: { threadId: "thread-existing", turn: { id: "turn-1", status: "completed" } },
+      });
+      expect(readAttemptTerminal(await run)).toMatchObject({
+        aborted: false,
+        timedOut: false,
+        promptError: null,
+      });
+    } finally {
+      start.mockRestore();
+      await harness.client.closeAndWait();
+    }
     expect(clientFactory).toHaveBeenCalledWith(
       expect.objectContaining({
         authProfileId: null,
         startOptions: expect.objectContaining({ homeScope: "user" }),
       }),
     );
-    const resumeRequest = harness.requests.find((request) => request.method === "thread/resume");
+    const resumeRequest = requests.find((request) => request.method === "thread/resume");
     const resumeParams = resumeRequest?.params as Record<string, unknown> | undefined;
     expect(resumeParams).not.toHaveProperty("model");
     expect(resumeParams).not.toHaveProperty("modelProvider");
     expect(resumeParams?.approvalsReviewer).toBe("auto_review");
     expect(resumeParams?.serviceTier).toBe("priority");
-    const turnRequest = harness.requests.find((request) => request.method === "turn/start");
+    const turnRequest = requests.find((request) => request.method === "turn/start");
     const turnParams = turnRequest?.params as Record<string, unknown> | undefined;
     expect(turnParams).not.toHaveProperty("model");
     expect(turnParams).not.toHaveProperty("modelProvider");

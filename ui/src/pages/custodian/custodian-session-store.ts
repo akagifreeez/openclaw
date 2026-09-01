@@ -143,9 +143,11 @@ export class CustodianSessionStore {
     this.emit();
   }
 
-  private setSensitive(sensitive: boolean): void {
-    // Secret input belongs to one prompt; ordinary drafts survive prompt replacement.
+  private resetPromptInput(sensitive: boolean): void {
+    // Retire prompt input at admission or replacement, even if the reply fails.
+    // Ordinary composer drafts survive explicit actions and prompt replacement.
     this.inputDrafts.sensitive = "";
+    [this.wizardValue, this.wizardSecretVisible] = [undefined, false];
     this.sensitive = sensitive;
   }
 
@@ -266,6 +268,7 @@ export class CustodianSessionStore {
       if (admit && !admit()) {
         return false;
       }
+      this.resetPromptInput(this.sensitive);
       replyEpoch = this.requestEpoch;
       if (questionReply) {
         this.questionReplyUncertain = true;
@@ -461,9 +464,7 @@ export class CustodianSessionStore {
   private restartVolatileSession(client: GatewayBrowserClient): void {
     this.replaceSessionId();
     this.answeredQuestions = retireCustodianQuestions(this.messages, this.answeredQuestions);
-    this.wizardValue = undefined;
-    this.wizardSecretVisible = false;
-    this.setSensitive(false);
+    this.resetPromptInput(false);
     this.wizardInputPending = this.questionReplyUncertain = false;
     this.earlierBoundaryAfterId = this.messages.at(-1)?.id ?? null;
     this.startSession(client, false);
@@ -640,8 +641,7 @@ export class CustodianSessionStore {
     this.transcript.reset();
     this.inferenceState = "unverified";
     this.inputDrafts.ordinary = "";
-    [this.wizardValue, this.wizardSecretVisible] = [undefined, false];
-    this.setSensitive(false);
+    this.resetPromptInput(false);
     this.wizardInputPending = this.questionReplyUncertain = false;
     this.earlierBoundaryAfterId = null;
   }
@@ -693,7 +693,7 @@ export class CustodianSessionStore {
         return "sent";
       }
       this.replaceSessionId(result.sessionId);
-      this.setSensitive(result.sensitive === true);
+      this.resetPromptInput(result.sensitive === true);
       this.wizardInputPending = result.wizardInputPending === true;
       this.retryParams = null;
       this.inferenceState = "ready";
@@ -712,7 +712,6 @@ export class CustodianSessionStore {
         }
       }
       this.wizardValue = step ? initialCustodianWizardValue(step) : undefined;
-      this.wizardSecretVisible = false;
       const silentReply = SILENT_REPLY_PATTERN.test(result.reply);
       if (!silentReply || question || step) {
         const message = createCustodianMessage(
