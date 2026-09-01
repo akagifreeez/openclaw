@@ -170,6 +170,17 @@ syncBuiltinESMExports();\n`,
       "runtime",
     ],
     [
+      "Gateway cron upgrade",
+      "scripts/run-vitest.mts",
+      [
+        "run",
+        "--config",
+        "test/vitest/vitest.gateway-core.config.ts",
+        "gateway-cron-upgrade.test.ts",
+      ],
+      "runtime",
+    ],
+    [
       "Windows cron process identity",
       "scripts/run-vitest.mts",
       [

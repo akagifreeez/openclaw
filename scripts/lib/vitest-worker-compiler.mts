@@ -48,6 +48,7 @@ async function compileVitestWorkerArtifacts(directory: string): Promise<void> {
     "scripts/windows-cmd-helpers.mjs",
     "scripts/lib/failed-trailer.mts",
     "scripts/lib/runtime-process-build-entries.mts",
+    "scripts/lib/runtime-process-core-build-entries.mts",
     "scripts/lib/vitest-worker-build-entries.mts",
     "scripts/lib/fs-safe-native-assets.mts",
     "scripts/lib/state-schema-inline-plugin.mts",

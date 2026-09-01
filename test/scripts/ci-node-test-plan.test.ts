@@ -1040,6 +1040,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       "src/gateway/gateway-active-memory.test.ts",
       "src/gateway/gateway-concurrent-streams.test.ts",
       "src/gateway/gateway-cron-process-identity.windows.test.ts",
+      "src/gateway/gateway-cron-upgrade.test.ts",
     ];
     for (const shards of [
       createNodeTestShards(),
@@ -1765,6 +1766,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           "src/gateway/gateway-active-memory.test.ts",
           "src/gateway/gateway-concurrent-streams.test.ts",
           "src/gateway/gateway-cron-process-identity.windows.test.ts",
+          "src/gateway/gateway-cron-upgrade.test.ts",
         ],
         pretestBuildMode: "runtime",
         requiresDist: false,
