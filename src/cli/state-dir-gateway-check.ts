@@ -9,11 +9,19 @@ import { ADMIN_SCOPE } from "../gateway/method-scopes.js";
 
 type GatewayHello = Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0];
 
-function normalizeStateDir(value: string): string {
-  try {
-    return fs.realpathSync.native(value);
-  } catch {
-    return path.resolve(value);
+// realpath rejects paths that do not exist yet (openclaw.json before the first write).
+// Canonicalize the nearest existing ancestor and re-append the missing tail; without it a
+// symlinked state dir compares unequal to the Gateway's real dir and the guard refuses the
+// first credential write.
+function canonicalizeStatePath(value: string): string {
+  const resolved = path.resolve(value);
+  for (let dir = resolved, tail = ""; ; dir = path.dirname(dir)) {
+    try {
+      return path.join(fs.realpathSync.native(dir), tail);
+    } catch {
+      if (path.dirname(dir) === dir) return resolved;
+      tail = path.join(path.basename(dir), tail);
+    }
   }
 }
 
@@ -22,7 +30,7 @@ async function serviceFallback(cliStateDir: string, warn?: (message: string) => 
     () => null,
   );
   const gatewayStateDir = state?.installed
-    ? normalizeStateDir(resolveStateDir(state.env))
+    ? canonicalizeStatePath(resolveStateDir(state.env))
     : undefined;
   if (gatewayStateDir && gatewayStateDir !== cliStateDir) {
     warn?.(
@@ -50,8 +58,8 @@ export async function checkCliGatewayStateDir(params: {
   command?: string;
   warn?: (message: string) => void;
 }) {
-  const cliStateDir = normalizeStateDir(resolveStateDir(process.env));
-  const cliConfigPath = normalizeStateDir(resolveConfigPath(process.env));
+  const cliStateDir = canonicalizeStatePath(resolveStateDir(process.env));
+  const cliConfigPath = canonicalizeStatePath(resolveConfigPath(process.env));
   let details: ReturnType<typeof buildGatewayConnectionDetails>;
   try {
     details = buildGatewayConnectionDetails({ config: params.config });
@@ -95,8 +103,8 @@ export async function checkCliGatewayStateDir(params: {
   if (!gatewayStateDir) {
     return { kind: "unavailable", cliStateDir };
   }
-  const liveStateDir = normalizeStateDir(gatewayStateDir);
-  const liveConfigPath = gatewayConfigPath ? normalizeStateDir(gatewayConfigPath) : undefined;
+  const liveStateDir = canonicalizeStatePath(gatewayStateDir);
+  const liveConfigPath = gatewayConfigPath ? canonicalizeStatePath(gatewayConfigPath) : undefined;
   const stateDirMismatch = liveStateDir !== cliStateDir;
   const configPathMismatch = liveConfigPath !== undefined && liveConfigPath !== cliConfigPath;
   const result = {

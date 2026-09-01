@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -76,6 +77,30 @@ describe("state-dir-gateway-check", () => {
     });
 
     await expect(checkCliGatewayStateDir({ config: {} })).resolves.toMatchObject({ kind: "match" });
+  });
+
+  it("matches a missing config path through a symlinked state directory", async () => {
+    const realStateDir = fsSync.realpathSync(root);
+    const link = path.join(realStateDir, "cli-link");
+    await fs.symlink(realStateDir, link);
+    vi.stubEnv("OPENCLAW_STATE_DIR", link);
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", path.join(link, "openclaw.json"));
+    mocks.callGateway.mockImplementation(async (opts: { onHelloOk?: (hello: unknown) => void }) => {
+      opts.onHelloOk?.({
+        snapshot: {
+          stateDir: realStateDir,
+          configPath: path.join(realStateDir, "openclaw.json"),
+        },
+      });
+      return {};
+    });
+
+    await expect(
+      checkCliGatewayStateDir({
+        config: {} as OpenClawConfig,
+        command: "openclaw models auth paste-token",
+      }),
+    ).resolves.toMatchObject({ kind: "match" });
   });
 
   it("returns unavailable when the gateway is missing", async () => {
