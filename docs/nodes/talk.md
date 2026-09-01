@@ -107,7 +107,7 @@ Keep the original `sessionKey` for client transcript, tool-call, and close reque
 `talk.client.close` requires both that exact key and the returned `voiceSessionId`;
 an equivalent storage alias is not a replacement. A `talk.client.toolCall` acknowledgement
 returns `agentId`, `agentSessionKey`, and `runId`; use that exact target for chat
-cancellation and history, including when the canonical key is `global`. Transcription-only sessions
+cancellation, history, and completion events, including when the canonical key is `global`. Transcription-only sessions
 without a key remain sessionless and do not select a default chat.
 
 ## Behavior (macOS)
