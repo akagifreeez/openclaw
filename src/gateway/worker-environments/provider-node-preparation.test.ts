@@ -4,6 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { requireGit } from "../../agents/worktrees/git.js";
 import { bindCloudWorkerSetupCompletion } from "../../infra/device-pairing-cloud-worker.js";
+import type { WorkerProvider } from "../../plugins/types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { createWorkerNodeProvisioning } from "./provider-node-provisioning.js";
 import { createWorkerEnvironmentService } from "./service.js";
@@ -132,6 +133,134 @@ describe("prepared node registration ownership", () => {
       await service.stop();
     }
   });
+
+  it.each([false, true, undefined])(
+    "registers a prepared workspace only with an explicit dedicated lease (sharedHost: %s)",
+    async (sharedHost) => {
+      const { store, config, root, stateDb } = support.testState;
+      const repository = path.join(root, "source");
+      await fs.mkdir(repository);
+      await requireGit(repository, ["init", "--quiet"]);
+      await requireGit(repository, ["config", "user.name", "Preparation Test"]);
+      await requireGit(repository, ["config", "user.email", "preparation@example.invalid"]);
+      await fs.writeFile(path.join(repository, "input.txt"), "committed source\n");
+      await requireGit(repository, ["add", "."]);
+      await requireGit(repository, ["commit", "--quiet", "-m", "source"]);
+      const deviceId = "prepared-service-node";
+      const target = { machineClass: "small", platform: "linux", arch: "x64" };
+      const registerPreparedWorkspace = vi.fn<
+        NonNullable<support.WorkerEnvironmentServiceOptions["registerPreparedWorkspace"]>
+      >(async ({ assertCurrent }) => assertCurrent());
+      const destroy = vi.fn(async () => {});
+      const provision = vi.fn<WorkerProvider["provision"]>(
+        async (_profile, _operation, options) => {
+          const project = options?.project;
+          if (!project?.preparation || !options?.beginNodeEnrollment) {
+            throw new Error("Expected admitted project and node enrollment");
+          }
+          const base = `/home/worker/.openclaw-worker/prepared/gateway/${project.preparation.key}`;
+          const runScript = vi
+            .fn()
+            .mockResolvedValueOnce(JSON.stringify({ ready: true }))
+            .mockResolvedValueOnce(
+              JSON.stringify({
+                workspaceDir: `${base}/workspace`,
+                homeDir: `${base}/home`,
+                sourceManifestRef: `sha256:${"d".repeat(64)}`,
+              }),
+            );
+          await project.prepare({ runScript, upload: vi.fn() });
+          await options.beginNodeEnrollment();
+          return {
+            leaseId: "prepared-service-lease",
+            node: { deviceId },
+            ...(sharedHost === undefined ? {} : { sharedHost }),
+          };
+        },
+      );
+      const provider = support.createProvider({
+        supportedExecutionModes: ["worker-turn"],
+        requiresNodeEnrollment: true,
+        provisionBeforeInstallation: true,
+        supportsProjectPreparation: () => true,
+        resolvePreparationTarget: () => target,
+        provision,
+        destroy,
+      });
+      const service = createWorkerEnvironmentService({
+        store,
+        getConfig: () => config,
+        resolveProvider: () => provider,
+        projectNamespace: "gateway",
+        prepareInstallation: async () => support.BUNDLE_ARTIFACT,
+        bootstrapWorker: support.testState.bootstrapWorker,
+        prepareNodeArtifacts: async () => ({
+          artifacts: {
+            nodeBootstrapSha256: support.NODE_BOOTSTRAP.sha256,
+            enabledPluginIds: [...support.NODE_BOOTSTRAP.enabledPluginIds],
+            workerBundleHash: support.BUNDLE_HASH,
+            workerArchiveSha256: support.BUNDLE_ARTIFACT.tarballSha256,
+            openclawVersion: support.BUNDLE_ARTIFACT.openclawVersion,
+            protocolFeatures: [],
+          },
+          assertCurrent: () => {},
+        }),
+        prepareNodeEnrollment: async (record) => {
+          const enrolled = store.ensureNodeEnrollment(record.environmentId);
+          if (!enrolled.nodeSetupId) {
+            throw new Error("Expected persisted enrollment setup");
+          }
+          bindCloudWorkerSetupCompletion({
+            db: stateDb.db,
+            completion: {
+              setupId: enrolled.nodeSetupId,
+              deviceId,
+              completedAtMs: support.testState.nowMs,
+            },
+          });
+          return {
+            mode: "connect",
+            setupId: enrolled.nodeSetupId,
+            setupCode: "setup-code",
+            nodeBootstrap: support.NODE_BOOTSTRAP,
+            openclawVersion: support.BUNDLE_ARTIFACT.openclawVersion,
+            displayName: "Prepared service test",
+            waitForDeviceId: async () => deviceId,
+          };
+        },
+        ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
+        registerPreparedWorkspace,
+        executeInference: async () => ({ type: "error", reason: "cancelled", message: "unused" }),
+        now: () => support.testState.nowMs,
+      });
+      support.testState.service = service;
+      const creation = service.create(
+        "development",
+        "prepared-service",
+        undefined,
+        "worker-turn",
+        repository,
+      );
+      if (sharedHost === false) {
+        await expect(creation).resolves.toMatchObject({
+          state: "ready",
+          nodeDeviceId: deviceId,
+          sharedHost: false,
+        });
+        expect(registerPreparedWorkspace).toHaveBeenCalledOnce();
+        expect(destroy).not.toHaveBeenCalled();
+      } else {
+        await expect(creation).rejects.toMatchObject({
+          code: "bootstrap_failure",
+          message: expect.stringContaining(
+            "Prepared worker requires its dedicated registered workspace",
+          ),
+        });
+        expect(registerPreparedWorkspace).not.toHaveBeenCalled();
+        expect(destroy).toHaveBeenCalledOnce();
+      }
+    },
+  );
 
   it.each(["before-registration", "during-registration", "after-ready"] as const)(
     "does not recreate a prepared binding when its owner closes %s",
