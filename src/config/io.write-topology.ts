@@ -30,6 +30,7 @@ export function prepareConfigWriteTopology(
   let nextConfig = params.nextConfig;
   const sourceRosterMigration = migratePersistedImplicitMainRoster(
     snapshot.sourceConfigBeforeMigrations ?? snapshot.parsed,
+    { env },
   );
   const retainedLegacyDefaultAgentId = sourceRosterMigration.retainedLegacyDefaultAgentId;
   const previousEntries = listAgentEntries(snapshot.config);
@@ -59,7 +60,7 @@ export function prepareConfigWriteTopology(
     if (nextEntries.some((entry) => entry.default === true)) {
       // This writer owns role transitions; retire only the submitted roster marker.
       nextConfig = coerceConfig(
-        migratePersistedImplicitMainRoster(nextConfig, { materializeRoles: false }).config,
+        migratePersistedImplicitMainRoster(nextConfig, { materializeRoles: false, env }).config,
       );
     }
     nextConfig = {

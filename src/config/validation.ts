@@ -136,7 +136,9 @@ function validateConfigObjectWithPluginMode(
   applyDefaults: boolean,
 ): ValidateConfigWithPluginsResult {
   const contextBudgetConfig = migrateLegacyContextBudgetConfig(raw).config;
-  const migrated = migratePersistedImplicitMainRoster(contextBudgetConfig).config as OpenClawConfig;
+  const migrated = migratePersistedImplicitMainRoster(contextBudgetConfig, {
+    env: params?.env,
+  }).config as OpenClawConfig;
   let manifestRegistry = params?.pluginMetadataSnapshot?.manifestRegistry;
   const result = validateConfigObjectWithPluginsBase(migrated, {
     applyDefaults,
