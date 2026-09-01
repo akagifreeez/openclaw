@@ -31,6 +31,7 @@ import {
 } from "../../lib/sessions/session-key.ts";
 import { showToast } from "../../lib/toast.ts";
 import { generateUUID } from "../../lib/uuid.ts";
+import { resolveComposerAvailability } from "./chat-composer-availability.ts";
 import { mutateChatGoal, submitChatGoalDraft } from "./chat-goals.ts";
 import { clearChatHistory } from "./chat-history-actions.ts";
 import { getChatHistoryVersion } from "./chat-history-state.ts";
@@ -112,13 +113,6 @@ export class ChatPane extends ChatPaneLayoutRender {
       publicationHasDirectPlacement &&
       hasOperatorWriteAccess(this.context.gateway.snapshot.hello?.auth ?? null) &&
       isGatewayMethodAdvertised(this.context.gateway.snapshot, "sessions.github.publish") === true;
-    const diskSpace = placement?.state === "active" ? placement.diskSpace : undefined;
-    const terminalReason = (placement as { terminalReason?: string } | undefined)?.terminalReason;
-    const placementFailureReason =
-      placement?.state === "failed" ? placement.recoveryError : terminalReason;
-    const placementRunError = placementFailureReason
-      ? { summary: t("chat.cloudWorkerFailed", { error: placementFailureReason }) }
-      : null;
     const visibleWorkspaceConflict =
       workspaceConflict &&
       this.dismissedWorkspaceConflictRefs.get(selectedSession?.key ?? state.sessionKey) !==
@@ -187,6 +181,10 @@ export class ChatPane extends ChatPaneLayoutRender {
       session: selectedSession,
     });
     const gatewaySnapshot = this.context.gateway.snapshot;
+    const placementComposer = this.placementComposerPresentation(
+      selectedSession,
+      placementStartup !== null,
+    );
     const canDismissProgressCard =
       state.connected &&
       !sessionParticipationBlocked &&
@@ -296,6 +294,29 @@ export class ChatPane extends ChatPaneLayoutRender {
           canSelectFull: hasOperatorAdminAccess(gatewaySnapshot.hello?.auth ?? null),
           onModelSetup: () => this.context.navigate("model-setup"),
         });
+    const sessionDisabledBanner = this.sessionDisabledBanner({
+      catalogDisabledReason,
+      modelSetupRequired,
+      restartRecoveryTombstoned,
+      selectedSessionArchived,
+      selectedSessionId: selectedSession?.sessionId?.trim() || undefined,
+      sessionKey: state.sessionKey,
+      unarchiveAccess: mutationAccess.unarchive,
+    });
+    const composerAvailability = resolveComposerAvailability({
+      catalog: Boolean(catalogKey),
+      catalogCanSend: this.catalogSession?.canContinue === true,
+      catalogDisabledReason,
+      modelSetupRequired,
+      baseDisabledReason: disabledReason,
+      baseDisabledReasonTone: sessionParticipationBlocked && !suggestionViewer ? "info" : "danger",
+      selectedSessionArchived,
+      restartRecoveryTombstoned,
+      placement: placementComposer,
+      sendHoldReason,
+      placementStartupPending: placementStartup !== null,
+      sessionDisabledBanner,
+    });
     const props: ChatProps = {
       transcript: this.transcript,
       paneId: this.presentationId,
@@ -387,35 +408,13 @@ export class ChatPane extends ChatPaneLayoutRender {
       onTypingChange: typingEnabled
         ? (typing, preview) => this.sendTypingState(typing, preview)
         : undefined,
-      canSend: catalogKey
-        ? this.catalogSession?.canContinue === true
-        : !modelSetupRequired &&
-          !modelUnavailableMessage &&
-          !selectedSessionArchived &&
-          !restartRecoveryTombstoned &&
-          (!sessionParticipationBlocked || suggestionViewer) &&
-          !sendHoldReason,
-      disabledReason:
-        catalogDisabledReason ?? disabledReason ?? (placementStartup ? null : sendHoldReason),
-      disabledReasonTone:
-        sessionParticipationBlocked && !suggestionViewer && !catalogDisabledReason
-          ? "info"
-          : "danger",
-      disabledBanner: this.sessionDisabledBanner({
-        catalogDisabledReason,
-        modelSetupRequired,
-        restartRecoveryTombstoned,
-        selectedSessionArchived,
-        selectedSessionId: selectedSession?.sessionId?.trim() || undefined,
-        sessionKey: state.sessionKey,
-        unarchiveAccess: mutationAccess.unarchive,
-      }),
+      ...composerAvailability,
       modelSetupRequired:
         modelSetupRequired && !selectedSessionArchived && !restartRecoveryTombstoned,
       onModelSetup: () => this.context.navigate("model-setup"),
       error: state.lastError,
-      diskSpace,
-      runError: catalogKey ? null : (state.chatRunError ?? placementRunError),
+      diskSpace: placementComposer.diskSpace,
+      runError: catalogKey ? null : (state.chatRunError ?? placementComposer.runError),
       inlineApproval: sessionParticipationBlocked ? null : inlineApproval,
       approvalBusy: overlays?.snapshot?.approvalBusy,
       approvalCanGrant: overlays?.snapshot?.approvalCanGrant ?? false,
