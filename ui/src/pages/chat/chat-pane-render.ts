@@ -7,6 +7,7 @@ import { patchSettings } from "../../app/settings.ts";
 import { readPresenceEntries, resolveCurrentSelfUser } from "../../app/user-profile.ts";
 import { navigateMarkdownSession } from "../../components/markdown-session-links.ts";
 import { personActivityRouting } from "../../components/person-activity-link.ts";
+import { isCloudWorkerPlacementState } from "../../components/session-row-badges.ts";
 import { t } from "../../i18n/index.ts";
 import {
   resolveControlUiFollowUpMode,
@@ -317,7 +318,7 @@ export class ChatPane extends ChatPaneLayoutRender {
               hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null),
             personalReady:
               !hasAbortableSessionRun(state) &&
-              (!placement || placement.state === "local") &&
+              !isCloudWorkerPlacementState(placement?.state) &&
               !workspaceConflict,
             isCurrent: () =>
               this.presented &&
