@@ -96,7 +96,12 @@ async function serviceFallback(
     warn?: (message: string) => void;
   },
 ) {
-  const state = await readGatewayServiceState(resolveGatewayService(), { env: process.env }).catch(
+  const serviceEnv = { ...process.env };
+  // Drop caller-owned paths: merged env would let a caller override masquerade as
+  // the service's own path and defeat the guard.
+  delete serviceEnv.OPENCLAW_STATE_DIR;
+  delete serviceEnv.OPENCLAW_CONFIG_PATH;
+  const state = await readGatewayServiceState(resolveGatewayService(), { env: serviceEnv }).catch(
     () => null,
   );
   if (!state?.installed) {

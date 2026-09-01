@@ -220,6 +220,64 @@ describe("state-dir-gateway-check", () => {
     );
   });
 
+  it.each([
+    ["state directory", "OPENCLAW_STATE_DIR", "cli-state"],
+    ["config path", "OPENCLAW_CONFIG_PATH", "cli-config.json"],
+  ] as const)(
+    "refuses a write when the service has no %s environment variable",
+    async (_label, overrideName, overridePath) => {
+      const home = path.join(root, "home");
+      const xdgConfigHome = path.join(root, "xdg-config");
+      const serviceStateDir = path.join(home, ".openclaw");
+      const serviceConfigPath = path.join(serviceStateDir, "openclaw.json");
+      await fs.mkdir(serviceStateDir, { recursive: true });
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("XDG_CONFIG_HOME", xdgConfigHome);
+      vi.stubEnv("OPENCLAW_LAUNCHD_LABEL", "com.example.gateway");
+      vi.stubEnv("OPENCLAW_SYSTEMD_UNIT", "openclaw-gateway.service");
+      vi.stubEnv("OPENCLAW_WINDOWS_TASK_NAME", "OpenClaw Gateway");
+      vi.stubEnv("OPENCLAW_STATE_DIR", "");
+      vi.stubEnv("OPENCLAW_CONFIG_PATH", "");
+      vi.stubEnv(overrideName, path.join(root, overridePath));
+      mocks.callGateway.mockRejectedValue(
+        new GatewayCredentialsRequiredError({
+          method: "status",
+          configPath: path.join(root, "cli", "openclaw.json"),
+        }),
+      );
+      mocks.probeGateway.mockResolvedValue({ ok: false, gatewayReached: true });
+      const service = {};
+      mocks.resolveGatewayService.mockReturnValue(service);
+      mocks.readGatewayServiceState.mockImplementation(
+        async (_service: unknown, options: { env?: NodeJS.ProcessEnv }) => ({
+          installed: true,
+          env: options.env ?? {},
+          command: { environment: {} },
+        }),
+      );
+
+      const check = checkCliGatewayStateDir({
+        config: {},
+        command: "openclaw models auth paste-token",
+      });
+      await expect(check).rejects.toThrow("No credentials were written.");
+      await expect(check).rejects.toThrow(`Gateway: ${serviceStateDir}`);
+      await expect(check).rejects.toThrow(`Gateway: ${serviceConfigPath}`);
+      expect(mocks.readGatewayServiceState).toHaveBeenCalledWith(service, {
+        env: expect.objectContaining({
+          HOME: home,
+          XDG_CONFIG_HOME: xdgConfigHome,
+          OPENCLAW_LAUNCHD_LABEL: "com.example.gateway",
+          OPENCLAW_SYSTEMD_UNIT: "openclaw-gateway.service",
+          OPENCLAW_WINDOWS_TASK_NAME: "OpenClaw Gateway",
+        }),
+      });
+      const serviceEnv = mocks.readGatewayServiceState.mock.calls[0]?.[1]?.env;
+      expect(serviceEnv).not.toHaveProperty("OPENCLAW_STATE_DIR");
+      expect(serviceEnv).not.toHaveProperty("OPENCLAW_CONFIG_PATH");
+    },
+  );
+
   it("warns and allows offline setup when the probe reaches nothing", async () => {
     const serviceDir = path.join(root, "service");
     await fs.mkdir(serviceDir);
