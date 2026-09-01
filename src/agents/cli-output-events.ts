@@ -7,6 +7,7 @@ import {
 } from "../../packages/markdown-core/src/reasoning-tags.js";
 import type { CliBackendConfig, CliBackendParsedJsonlEvent } from "../plugins/cli-backend.types.js";
 import type {
+  CliCompactionDelta,
   CliOutput,
   CliStreamingDelta,
   CliThinkingDelta,
@@ -104,6 +105,7 @@ export function projectCliBackendEvent(params: {
   toolTracker: ToolUseTracker;
   onAssistantDelta: (delta: CliStreamingDelta) => void;
   onThinkingDelta?: (delta: CliThinkingDelta) => void;
+  onCompaction?: (delta: CliCompactionDelta) => void;
   onDisplayToolUseStart?: (delta: CliToolUseStartDelta) => void;
   onToolUseStart?: (delta: CliToolUseStartDelta) => void;
   onDisplayToolResult?: (delta: CliToolResultDelta) => void;
@@ -150,6 +152,10 @@ export function projectCliBackendEvent(params: {
       delta: event.text,
       isReasoningSnapshot: true,
     });
+    return;
+  }
+  if (event.kind === "compaction") {
+    params.onCompaction?.(event);
     return;
   }
   if (event.kind === "toolStart") {

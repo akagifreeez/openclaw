@@ -196,9 +196,6 @@ export async function handleItemEvent(
   payload: CallbackPayload<"onItemEvent">,
 ): Promise<boolean> {
   if (payload.kind === "preamble") {
-    if (turn.verboseProgressActive()) {
-      return false;
-    }
     let rendered = false;
     if (turn.streamMode === "progress") {
       rendered = await turn.progressCompositor.pushPreambleHeadline(payload.progressText, {

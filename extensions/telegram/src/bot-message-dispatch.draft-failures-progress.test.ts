@@ -708,6 +708,9 @@ describeTelegramDispatch("dispatchTelegramMessage draft-failures-progress", () =
     });
 
     expectDeliveredReply(0, { text: "All done" });
+    expect(
+      requireInvocationOrder(answerDraftStream.discard, 0, "progress draft discard"),
+    ).toBeLessThan(requireInvocationOrder(deliverReplies, 0, "final reply delivery"));
     expectWindowRetiredAfterFinal(answerDraftStream, deliverReplies);
   });
 
