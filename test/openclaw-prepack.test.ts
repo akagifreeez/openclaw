@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -68,10 +69,34 @@ function createBundledChannelSmokeFixture(entrySource: string, prepared = false)
   return { rootDir, packageRoot };
 }
 
-function runStandaloneBundledChannelSmoke(entrySource: string) {
-  const { rootDir, packageRoot } = createBundledChannelSmokeFixture(entrySource);
+type BundledChannelSmokeLayout = "source" | "installed-env" | "installed-path";
 
-  return spawnSync(
+function runStandaloneBundledChannelSmoke(entrySource: string, layout: BundledChannelSmokeLayout) {
+  const fixture = createBundledChannelSmokeFixture(entrySource);
+  const { rootDir } = fixture;
+  let { packageRoot } = fixture;
+  if (layout === "installed-path") {
+    const installedRoot = path.join(rootDir, "node_modules", "openclaw");
+    mkdirSync(path.dirname(installedRoot), { recursive: true });
+    renameSync(packageRoot, installedRoot);
+    packageRoot = installedRoot;
+  }
+  const temporaryRoot = path.join(rootDir, "smoke-temp");
+  mkdirSync(temporaryRoot);
+  const sentinelPath = path.join(temporaryRoot, "unrelated.txt");
+  writeFileSync(sentinelPath, "preserve caller-owned temporary sibling\n");
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    TMPDIR: temporaryRoot,
+    TMP: temporaryRoot,
+    TEMP: temporaryRoot,
+  };
+  delete env.OPENCLAW_BUNDLED_CHANNEL_SMOKE_INSTALLED_LAYOUT;
+  if (layout === "installed-env") {
+    env.OPENCLAW_BUNDLED_CHANNEL_SMOKE_INSTALLED_LAYOUT = "1";
+  }
+
+  const result = spawnSync(
     process.execPath,
     [
       path.join(rootDir, "scripts", "test-built-bundled-channel-entry-smoke.mts"),
@@ -81,36 +106,54 @@ function runStandaloneBundledChannelSmoke(entrySource: string) {
     {
       cwd: rootDir,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        OPENCLAW_BUNDLED_CHANNEL_SMOKE_INSTALLED_LAYOUT: "1",
-      },
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  return {
+    result,
+    temporaryEntries: readdirSync(temporaryRoot).toSorted(),
+    sentinel: readFileSync(sentinelPath, "utf8"),
+    entrySource: readFileSync(
+      path.join(packageRoot, "dist", "extensions", "fixture-channel", "index.js"),
+      "utf8",
+    ),
+  };
 }
 
 describe("standalone bundled channel smoke", () => {
-  it("runs without workspace packages linked at the root", () => {
-    const result = runStandaloneBundledChannelSmoke(`
-      export default {
-        kind: "bundled-channel-entry",
-        loadChannelPlugin() {
-          return { id: "fixture-channel" };
-        },
-      };
-    `);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("channel=1");
-  });
-
-  it("rejects a non-record channel entry default export", () => {
-    const result = runStandaloneBundledChannelSmoke("export default [];\n");
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("AssertionError");
-  });
+  const layouts = ["source", "installed-env", "installed-path"] as const;
+  it.each(
+    layouts.flatMap((layout) => [
+      { layout, invalid: false },
+      { layout, invalid: true },
+    ]),
+  )(
+    "preserves the result and releases its layout for $layout with invalid=$invalid",
+    ({ layout, invalid }) => {
+      const entrySource = invalid
+        ? "export default [];\n"
+        : `export default {
+            kind: "bundled-channel-entry",
+            loadChannelPlugin() { return { id: "fixture-channel" }; },
+          };\n`;
+      const observed = runStandaloneBundledChannelSmoke(entrySource, layout);
+      const { result } = observed;
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.status, result.stderr).toBe(invalid ? 1 : 0);
+      if (invalid) {
+        expect(result.stderr).toContain("AssertionError");
+        expect(result.stdout).not.toContain("[build-smoke]");
+      } else {
+        expect(result.stdout).toContain("channel=1");
+        expect(result.stdout.match(/\[build-smoke\]/gu)).toHaveLength(1);
+      }
+      expect(observed.entrySource).toBe(entrySource);
+      expect(observed.sentinel).toBe("preserve caller-owned temporary sibling\n");
+      expect(observed.temporaryEntries).toEqual(["unrelated.txt"]);
+    },
+  );
 });
 
 describe("prepared prepack ownership", () => {
