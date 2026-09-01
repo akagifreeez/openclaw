@@ -18,6 +18,7 @@ import {
   formatUnknownChannelMessage,
   formatUnsupportedChannelActionMessage,
 } from "../../cli/error-format.js";
+import { checkCliGatewayStateDir } from "../../cli/state-dir-gateway-check.js";
 import { isTerminalInteractive } from "../../cli/terminal-interactivity.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { commitConfigWithPendingPluginInstalls } from "../../plugins/install-record-commit.js";
@@ -154,6 +155,15 @@ async function channelsAddCommandImpl(
   const baseHash = configSnapshot.hash;
   let nextConfig = cfg;
   let pluginRegistrySourceChanged = false;
+  let stateDirCheck: Promise<void> | undefined;
+  const beforePersistentEffect = async () => {
+    await params?.beforePersistentEffect?.();
+    await (stateDirCheck ??= checkCliGatewayStateDir({
+      allowMismatch: opts.allowStateDirMismatch,
+      command: "openclaw channels add",
+      warn: runtime.log,
+    }).then(() => undefined));
+  };
 
   const useWizard = shouldUseWizard(params);
   if (useWizard) {
@@ -178,9 +188,7 @@ async function channelsAddCommandImpl(
       runtime,
       prompter: createClackPrompter(),
       ...(target.kind === "resolved" ? { initialChannel: target.channel } : {}),
-      ...(params?.beforePersistentEffect
-        ? { beforePersistentEffect: params.beforePersistentEffect }
-        : {}),
+      beforePersistentEffect,
     });
     return;
   }
@@ -240,9 +248,7 @@ async function channelsAddCommandImpl(
         runtime,
         workspaceDir,
         promptInstall: false,
-        ...(params?.beforePersistentEffect
-          ? { beforePersistentEffect: params.beforePersistentEffect }
-          : {}),
+        beforePersistentEffect,
       });
       nextConfig = result.cfg;
       if (!result.installed) {
@@ -284,9 +290,7 @@ async function channelsAddCommandImpl(
     resolveInput: () =>
       plugin.setupContract ? buildChannelOwnedSetupInput(opts) : buildChannelSetupInput(opts),
     runtime,
-    ...(params?.beforePersistentEffect
-      ? { beforePersistentEffect: params.beforePersistentEffect }
-      : {}),
+    beforePersistentEffect,
   });
   if (!prepared.ok) {
     runtime.error(
@@ -305,13 +309,11 @@ async function channelsAddCommandImpl(
     channel,
     prepared: prepared.value,
     runtime,
-    ...(params?.beforePersistentEffect
-      ? { beforePersistentEffect: params.beforePersistentEffect }
-      : {}),
+    beforePersistentEffect,
   });
   nextConfig = normalizeExternalChannelSetupConfig({ cfg: applied.nextConfig, channel });
 
-  await params?.beforePersistentEffect?.();
+  await beforePersistentEffect();
   const committed = await commitConfigWithPendingPluginInstalls({
     nextConfig,
     ...(baseHash !== undefined ? { baseHash } : {}),
@@ -348,9 +350,7 @@ async function channelsAddCommandImpl(
       ],
       cfg: writtenConfig,
       runtime,
-      ...(params?.beforePersistentEffect
-        ? { beforePersistentEffect: params.beforePersistentEffect }
-        : {}),
+      beforePersistentEffect,
     });
   }
 }

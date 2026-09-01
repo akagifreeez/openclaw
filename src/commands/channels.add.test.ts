@@ -52,6 +52,10 @@ const terminalMocks = vi.hoisted(() => ({
   isTerminalInteractive: vi.fn(() => true),
 }));
 
+const stateDirMocks = vi.hoisted(() => ({
+  checkCliGatewayStateDir: vi.fn(),
+}));
+
 const channelWizardMocks = vi.hoisted(() => {
   const prompter = {
     intro: vi.fn(async () => undefined),
@@ -107,6 +111,8 @@ vi.mock("../plugins/registry-refresh.js", () => registryRefreshMocks);
 vi.mock("../plugins/install-record-commit.js", () => pluginInstallRecordCommitMocks);
 
 vi.mock("../cli/terminal-interactivity.js", () => terminalMocks);
+
+vi.mock("../cli/state-dir-gateway-check.js", () => stateDirMocks);
 
 vi.mock("../wizard/clack-prompter.js", () => ({
   createClackPrompter: () => channelWizardMocks.prompter,
@@ -492,6 +498,8 @@ describe("channelsAddCommand", () => {
     runtime.log.mockClear();
     runtime.error.mockClear();
     runtime.exit.mockClear();
+    stateDirMocks.checkCliGatewayStateDir.mockReset();
+    stateDirMocks.checkCliGatewayStateDir.mockResolvedValue({ kind: "match" });
     terminalMocks.isTerminalInteractive.mockReset().mockReturnValue(true);
     catalogMocks.getChannelPluginCatalogEntry.mockClear();
     catalogMocks.getChannelPluginCatalogEntry.mockReturnValue(undefined);
@@ -1228,6 +1236,12 @@ describe("channelsAddCommand", () => {
       token: "test-token",
       workspace: "prepared-workspace",
     });
+    expect(stateDirMocks.checkCliGatewayStateDir).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "openclaw channels add",
+        allowMismatch: undefined,
+      }),
+    );
   });
 
   it("stops before config commit when the state-directory guard rejects", async () => {

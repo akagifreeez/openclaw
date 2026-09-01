@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolveStateDir } from "../config/paths.js";
+import { resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readGatewayServiceState, resolveGatewayService } from "../daemon/service.js";
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
@@ -8,15 +8,6 @@ import type { GatewayClientOptions } from "../gateway/client.js";
 import { ADMIN_SCOPE } from "../gateway/method-scopes.js";
 
 type GatewayHello = Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0];
-type StateDirs = { cliStateDir: string };
-export type GatewayStateDirCheck =
-  | (StateDirs & { kind: "match" | "mismatch"; gatewayStateDir: string })
-  | (StateDirs & {
-      kind: "unavailable";
-      gatewayStateDir?: string;
-      gatewayStateDirSource?: "configured service target";
-    })
-  | (StateDirs & { kind: "remote"; gatewayUrl: string });
 
 function normalizeStateDir(value: string): string {
   try {
@@ -42,7 +33,10 @@ async function serviceFallback(cliStateDir: string, warn?: (message: string) => 
     kind: "unavailable" as const,
     cliStateDir,
     ...(gatewayStateDir
-      ? { gatewayStateDir, gatewayStateDirSource: "configured service target" as const }
+      ? {
+          gatewayStateDir,
+          gatewayStateDirSource: "configured service target" as const,
+        }
       : {}),
   };
 }
@@ -55,8 +49,9 @@ export async function checkCliGatewayStateDir(params: {
   allowMismatch?: boolean;
   command?: string;
   warn?: (message: string) => void;
-}): Promise<GatewayStateDirCheck> {
+}) {
   const cliStateDir = normalizeStateDir(resolveStateDir(process.env));
+  const cliConfigPath = normalizeStateDir(resolveConfigPath(process.env));
   let details: ReturnType<typeof buildGatewayConnectionDetails>;
   try {
     details = buildGatewayConnectionDetails({ config: params.config });
@@ -75,6 +70,7 @@ export async function checkCliGatewayStateDir(params: {
   }
 
   let gatewayStateDir = params.gatewayStateDir;
+  let gatewayConfigPath: string | undefined;
   if (params.gatewayStatus === "failure") {
     return await serviceFallback(cliStateDir, params.warn);
   }
@@ -85,8 +81,12 @@ export async function checkCliGatewayStateDir(params: {
         method: "status",
         params: { includeChannelSummary: false },
         scopes: [ADMIN_SCOPE],
+        sharedStateMode: "read-only",
         timeoutMs: params.timeoutMs,
-        onHelloOk: (hello: GatewayHello) => (gatewayStateDir = hello.snapshot.stateDir),
+        onHelloOk: (hello: GatewayHello) => {
+          gatewayStateDir = hello.snapshot.stateDir;
+          gatewayConfigPath = hello.snapshot.configPath;
+        },
       });
     } catch {
       return await serviceFallback(cliStateDir, params.warn);
@@ -96,15 +96,27 @@ export async function checkCliGatewayStateDir(params: {
     return { kind: "unavailable", cliStateDir };
   }
   const liveStateDir = normalizeStateDir(gatewayStateDir);
-  const result =
-    liveStateDir === cliStateDir
-      ? { kind: "match" as const, cliStateDir, gatewayStateDir: liveStateDir }
-      : { kind: "mismatch" as const, cliStateDir, gatewayStateDir: liveStateDir };
+  const liveConfigPath = gatewayConfigPath ? normalizeStateDir(gatewayConfigPath) : undefined;
+  const stateDirMismatch = liveStateDir !== cliStateDir;
+  const configPathMismatch = liveConfigPath !== undefined && liveConfigPath !== cliConfigPath;
+  const result = {
+    kind: stateDirMismatch || configPathMismatch ? "mismatch" : "match",
+    cliStateDir,
+    gatewayStateDir: liveStateDir,
+  };
   if (result.kind === "mismatch") {
-    const message = `CLI and live Gateway use different state directories. CLI: ${result.cliStateDir}; Gateway: ${result.gatewayStateDir}. The CLI may read or write a store the Gateway does not use. Fix: run OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${result.gatewayStateDir}/openclaw.json openclaw doctor, then rerun openclaw gateway status --deep.`;
+    const differences = [
+      stateDirMismatch &&
+        `state directories (CLI: ${cliStateDir}; Gateway: ${result.gatewayStateDir})`,
+      configPathMismatch && `config paths (CLI: ${cliConfigPath}; Gateway: ${liveConfigPath})`,
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    const gatewayConfig = liveConfigPath ?? path.join(result.gatewayStateDir, "openclaw.json");
+    const message = `CLI and live Gateway use different ${differences}. The CLI may read or write a store or config file the Gateway does not use. Fix: run OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} openclaw doctor, then rerun openclaw gateway status --deep.`;
     if (params.command && !params.allowMismatch) {
       throw new Error(
-        `No credentials were written. CLI state dir ${result.cliStateDir} differs from the running Gateway's ${result.gatewayStateDir}. Fix: rerun with OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${result.gatewayStateDir}/openclaw.json ${params.command}, or pass --allow-state-dir-mismatch to write here anyway.`,
+        `No credentials were written. ${differences}. Fix: rerun with OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} ${params.command}, or pass --allow-state-dir-mismatch to write here anyway.`,
       );
     }
     params.warn?.(message);

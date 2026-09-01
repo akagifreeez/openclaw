@@ -174,6 +174,9 @@ openclaw channels logout --channel whatsapp
 
 - `channels login` supports `--account <id>` and `--verbose`; `channels logout` supports `--account <id>`.
 - `channels login` and `logout` can infer the channel when only one configured channel supports that action; with several, pass `--channel`.
+
+Before `channels add` or `channels login` writes credentials or config, OpenClaw compares the CLI's resolved state directory and config path with the live local Gateway. A live mismatch refuses the write. Pass `--allow-state-dir-mismatch` when the divergence is intentional; this writes to the CLI paths even though the Gateway will not read those credentials or config changes. If the Gateway is unreachable, OpenClaw reports the configured service target when available but does not claim live proof.
+
 - `channels logout` prefers the live Gateway path when reachable, so logout stops any active listener before clearing channel auth state. If a local Gateway is not reachable, it falls back to local auth cleanup; with `gateway.mode: "remote"` the gateway error fails the command instead.
 - Logout reports whether the plugin cleared saved auth. If the plugin reports that the account is not logged out, the CLI warns that other credentials may still be active; this is not a claim that provider-side tokens were revoked.
 - Login and logout base config changes on the authored source, not runtime defaults. A logout with no credentials to clear does not rewrite config merely because runtime defaults were materialized; intentional plugin enablement or installation changes can still be saved.

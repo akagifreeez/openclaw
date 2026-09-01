@@ -17,10 +17,13 @@ import {
   type ChannelSetupCliOption,
 } from "./channels-cli-add-args.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
-import { hasExplicitOptions, inheritOptionFromParent } from "./command-options.js";
+import {
+  hasExplicitOptions,
+  inheritOptionFromParent,
+  STATE_DIR_MISMATCH_OPTION,
+} from "./command-options.js";
 import { formatHelpExamples } from "./help-format.js";
 import { applyParentDefaultHelpAction } from "./program/parent-default-help.js";
-import { checkCliGatewayStateDir } from "./state-dir-gateway-check.js";
 import { normalizeWindowsArgv } from "./windows-argv.js";
 
 type ChannelsCommandsModule = typeof import("../commands/channels.js");
@@ -323,7 +326,7 @@ export async function registerChannelsCli(
     .option("--channel <name>", `Channel (${channelNames})`)
     .option("--account <id>", "Account id (default when omitted)")
     .option("--name <name>", "Display name for this account")
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir");
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION);
 
   let channelSetupOptionMode: ChannelSetupOptionMode = "none";
   const selectedChannelId = await resolveChannelsAddChannelFromArgv(argv);
@@ -340,7 +343,6 @@ export async function registerChannelsCli(
   addCommand.action(async (channelArg: string | undefined, opts, command) => {
     await runChannelsCommand(async () => {
       const { channelsAddCommand } = await loadChannelsCommands();
-      let stateDirCheck: Promise<void> | undefined;
       const hasFlags = hasExplicitOptions(
         command,
         getOptionNames(command).filter((name) => !CHANNEL_ADD_SELECTION_OPTION_NAMES.has(name)),
@@ -352,15 +354,7 @@ export async function registerChannelsCli(
           channelSetupOptionMode === "modern" ? command : undefined,
         ),
         defaultRuntime,
-        {
-          hasFlags,
-          beforePersistentEffect: () =>
-            (stateDirCheck ??= checkCliGatewayStateDir({
-              allowMismatch: Boolean(opts.allowStateDirMismatch),
-              command: "openclaw channels add",
-              warn: defaultRuntime.log,
-            }).then(() => undefined)),
-        },
+        { hasFlags },
       );
     });
   });
@@ -379,26 +373,26 @@ export async function registerChannelsCli(
       });
     });
 
-  channels
+  const loginCommand = channels
     .command("login")
     .description("Link a channel account (if supported)")
     .option("--channel <channel>", "Channel alias (auto when only one is configured)")
     .option("--account <id>", "Account id (accountId)")
     .option("--verbose", "Verbose connection logs", false)
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir")
-    .action(async (opts) => {
-      await runChannelsCommandWithDanger(async () => {
-        await runChannelLogin(
-          {
-            channel: opts.channel as string | undefined,
-            account: opts.account as string | undefined,
-            verbose: Boolean(opts.verbose),
-            allowStateDirMismatch: Boolean(opts.allowStateDirMismatch),
-          },
-          defaultRuntime,
-        );
-      }, "Channel login failed");
-    });
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION);
+  loginCommand.action(async (opts) => {
+    await runChannelsCommandWithDanger(async () => {
+      await runChannelLogin(
+        {
+          channel: opts.channel as string | undefined,
+          account: opts.account as string | undefined,
+          verbose: Boolean(opts.verbose),
+          allowStateDirMismatch: Boolean(opts.allowStateDirMismatch),
+        },
+        defaultRuntime,
+      );
+    }, "Channel login failed");
+  });
 
   channels
     .command("logout")

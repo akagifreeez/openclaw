@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 const mocks = vi.hoisted(() => ({
@@ -22,10 +22,11 @@ vi.mock("../daemon/service.js", () => ({
 import { checkCliGatewayStateDir } from "./state-dir-gateway-check.js";
 
 describe("state-dir-gateway-check", () => {
+  const tempDirs = useAutoCleanupTempDirTracker(afterEach);
   let root: string;
 
   beforeEach(async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-state-dir-check-"));
+    root = tempDirs.make("openclaw-state-dir-check-");
     mocks.callGateway.mockReset();
     mocks.readGatewayServiceState.mockReset();
     mocks.resolveGatewayService.mockReset();
@@ -56,11 +57,21 @@ describe("state-dir-gateway-check", () => {
     const realRoot = await fs.realpath(root);
     const gateway = path.join(realRoot, "gateway");
     await fs.mkdir(gateway);
+    const gatewayConfig = path.join(gateway, "openclaw.json");
+    await fs.writeFile(gatewayConfig, "{}\n");
     const link = path.join(realRoot, "cli-link");
     await fs.symlink(gateway, link);
+    const configLink = path.join(realRoot, "cli-config-link.json");
+    await fs.symlink(gatewayConfig, configLink);
     vi.stubEnv("OPENCLAW_STATE_DIR", link);
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", configLink);
     mocks.callGateway.mockImplementation(async (opts: { onHelloOk?: (hello: unknown) => void }) => {
-      opts.onHelloOk?.({ snapshot: { stateDir: await fs.realpath(gateway) } });
+      opts.onHelloOk?.({
+        snapshot: {
+          stateDir: await fs.realpath(gateway),
+          configPath: await fs.realpath(gatewayConfig),
+        },
+      });
       return {};
     });
 
@@ -142,7 +153,31 @@ describe("state-dir-gateway-check", () => {
     ).rejects.toThrow("No credentials were written.");
     expect(write).not.toHaveBeenCalled();
     expect(mocks.callGateway).toHaveBeenCalledWith(
-      expect.objectContaining({ method: "status", scopes: ["operator.admin"] }),
+      expect.objectContaining({
+        method: "status",
+        scopes: ["operator.admin"],
+        sharedStateMode: "read-only",
+      }),
     );
+  });
+
+  it("refuses a live config-path mismatch when state directories match", async () => {
+    const stateDir = path.join(root, "shared");
+    const cliConfigPath = path.join(root, "cli-config.json");
+    const gatewayConfigPath = path.join(root, "gateway-config.json");
+    await fs.mkdir(stateDir);
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", cliConfigPath);
+    mocks.callGateway.mockImplementation(async (opts: { onHelloOk?: (hello: unknown) => void }) => {
+      opts.onHelloOk?.({ snapshot: { stateDir, configPath: gatewayConfigPath } });
+      return {};
+    });
+
+    await expect(
+      checkCliGatewayStateDir({
+        config: {} as OpenClawConfig,
+        command: "openclaw models auth paste-token",
+      }),
+    ).rejects.toThrow("config paths");
   });
 });

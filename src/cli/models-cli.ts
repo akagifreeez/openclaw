@@ -2,7 +2,7 @@
 import type { Command } from "commander";
 import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { theme } from "../../packages/terminal-core/src/theme.js";
-import { inheritOptionFromParent } from "./command-options.js";
+import { inheritOptionFromParent, STATE_DIR_MISMATCH_OPTION } from "./command-options.js";
 import { isModelsStatusJsonOutput } from "./models-output-mode.js";
 import { setCommandJsonMode } from "./program/json-mode.js";
 
@@ -326,7 +326,7 @@ export function registerModelsCli(program: Command) {
 
   const auth = models.command("auth").description("Manage model auth profiles");
   auth.option("--agent <id>", "Agent id for auth commands");
-  auth.option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir");
+  auth.option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION);
   auth.action(() => {
     auth.help();
   });
@@ -356,7 +356,7 @@ export function registerModelsCli(program: Command) {
     .command("add")
     .description("Interactive auth helper (provider auth or paste token)")
     .option("--agent <id>", "Agent id (default: configured default agent)")
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .action(async (opts, command) => {
       await withModelsRuntime(async ({ defaultRuntime, resolveModelAgentOption }) => {
         const agent = resolveModelAgentOption(command, opts);
@@ -406,7 +406,7 @@ export function registerModelsCli(program: Command) {
       "Remove existing profiles for the provider before logging in (use when a cached OAuth profile is stuck or you want to switch accounts)",
       false,
     )
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .action(async (opts, command) => {
       if (opts.deviceCode && typeof opts.method === "string" && opts.method !== "device-code") {
         throw new Error(
@@ -437,7 +437,7 @@ export function registerModelsCli(program: Command) {
     .option("--agent <id>", "Agent id (default: configured default agent)")
     .option("--provider <name>", "Provider id")
     .option("--yes", "Skip confirmation", false)
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .action(async (opts, command) => {
       await withModelsRuntime(async ({ defaultRuntime, resolveModelAgentOption }) => {
         const agent = resolveModelAgentOption(command);
@@ -459,7 +459,7 @@ export function registerModelsCli(program: Command) {
     .description("Paste a token into auth-profiles.json and update config")
     .option("--agent <id>", "Agent id (default: configured default agent)")
     .requiredOption("--provider <name>", "Provider id (e.g. anthropic)")
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .option("--profile-id <id>", "Auth profile id (default: <provider>:manual)")
     .option(
       "--expires-in <duration>",
@@ -487,7 +487,7 @@ export function registerModelsCli(program: Command) {
     .description("Paste an API key into auth-profiles.json and update config")
     .option("--agent <id>", "Agent id (default: configured default agent)")
     .requiredOption("--provider <name>", "Provider id (e.g. openai)")
-    .option("--allow-state-dir-mismatch", "Write here when the Gateway uses another state dir")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .option("--profile-id <id>", "Auth profile id (default: <provider>:manual)")
     .action(async (opts, command) => {
       await withModelsRuntime(async ({ defaultRuntime, resolveModelAgentOption }) => {
