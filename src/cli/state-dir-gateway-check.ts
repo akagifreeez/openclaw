@@ -19,7 +19,9 @@ function canonicalizeStatePath(value: string): string {
     try {
       return path.join(fs.realpathSync.native(dir), tail);
     } catch {
-      if (path.dirname(dir) === dir) return resolved;
+      if (path.dirname(dir) === dir) {
+        return resolved;
+      }
       tail = path.join(path.basename(dir), tail);
     }
   }
