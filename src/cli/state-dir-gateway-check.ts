@@ -122,8 +122,6 @@ async function serviceFallback(
 export async function checkCliGatewayStateDir(params: {
   config?: OpenClawConfig;
   timeoutMs?: number;
-  gatewayStateDir?: string;
-  gatewayStatus?: "success" | "failure";
   allowMismatch?: boolean;
   command?: string;
   warn?: (message: string) => void;
@@ -147,51 +145,43 @@ export async function checkCliGatewayStateDir(params: {
     return { kind: "remote", cliStateDir, gatewayUrl: details.url };
   }
 
-  let gatewayStateDir = params.gatewayStateDir;
+  let gatewayStateDir: string | undefined;
   let gatewayConfigPath: string | undefined;
-  if (params.gatewayStatus === "failure") {
+  try {
+    await callGateway({
+      config: params.config,
+      method: "status",
+      params: { includeChannelSummary: false },
+      scopes: [ADMIN_SCOPE],
+      sharedStateMode: "read-only",
+      timeoutMs: params.timeoutMs,
+      onHelloOk: (hello: GatewayHello) => {
+        gatewayStateDir = hello.snapshot.stateDir;
+        gatewayConfigPath = hello.snapshot.configPath;
+      },
+    });
+  } catch {
+    let gatewayReachable = false;
+    try {
+      // Credential preflight can fail before opening a socket. Probe without stored auth so only
+      // a Gateway protocol response can upgrade the fallback from offline to reachable.
+      const probe = await probeGateway({
+        url: details.url,
+        config: params.config,
+        timeoutMs: clampProbeTimeoutMs(params.timeoutMs ?? 10_000),
+        includeDetails: false,
+        suppressStoredDeviceAuth: true,
+      });
+      gatewayReachable = probe.gatewayReached === true;
+    } catch {
+      // A probe that cannot complete is not proof of a live Gateway; stay offline.
+    }
     return await serviceFallback(cliStateDir, cliConfigPath, {
-      gatewayReachable: false,
+      gatewayReachable,
       command: params.command,
       allowMismatch: params.allowMismatch,
       warn: params.warn,
     });
-  }
-  if (params.gatewayStatus === undefined) {
-    try {
-      await callGateway({
-        config: params.config,
-        method: "status",
-        params: { includeChannelSummary: false },
-        scopes: [ADMIN_SCOPE],
-        sharedStateMode: "read-only",
-        timeoutMs: params.timeoutMs,
-        onHelloOk: (hello: GatewayHello) => {
-          gatewayStateDir = hello.snapshot.stateDir;
-          gatewayConfigPath = hello.snapshot.configPath;
-        },
-      });
-    } catch {
-      let gatewayReachable = false;
-      try {
-        // Credential preflight can fail before opening a socket. Probe without stored auth so only
-        // a Gateway protocol response can upgrade the fallback from offline to reachable.
-        const probe = await probeGateway({
-          url: details.url,
-          config: params.config,
-          timeoutMs: clampProbeTimeoutMs(params.timeoutMs ?? 10_000),
-          includeDetails: false,
-          suppressStoredDeviceAuth: true,
-        });
-        gatewayReachable = probe.gatewayReached === true;
-      } catch {}
-      return await serviceFallback(cliStateDir, cliConfigPath, {
-        gatewayReachable,
-        command: params.command,
-        allowMismatch: params.allowMismatch,
-        warn: params.warn,
-      });
-    }
   }
   return compareGatewayStateDirs({
     cliStateDir,
