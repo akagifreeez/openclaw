@@ -119,6 +119,18 @@ function listAllToolingTestFiles(): string[] {
 }
 
 describe("scripts/lib/ci-node-test-plan.mts", () => {
+  it("keeps Chromium files in the UI CI owner and Node-driven Playwright files in Node stripes", () => {
+    const shards = createNodeTestShards();
+    const uiStripes = shards.filter((shard) =>
+      shard.shardName.startsWith("core-runtime-media-ui-"),
+    );
+    const files = uiStripes.flatMap((shard) => shard.includePatterns ?? []);
+    expect(files).toContain("ui/src/components/form-controls.browser.test.ts");
+    expect(files).not.toContain("ui/src/components/markdown-mermaid.runtime.browser.test.ts");
+    expect(shards.flatMap((shard) => shard.configs)).not.toContain(
+      "test/vitest/vitest.ui-browser.config.ts",
+    );
+  });
   it.each(["github", "hybrid"])("keeps oversized sparse groups nonempty on %s", (runnerBackend) => {
     const native = createNodeTestShards({ includeReleaseOnlyPluginShards: false });
     const targets = [1, 2].map((count) =>
@@ -237,7 +249,9 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     const gatewayGroups = groups.filter((group) =>
       group.shard_name.startsWith("cache-warm:agentic-gateway-methods:"),
     );
-    expect(gatewayGroups.map((group) => group.configs[0]).toSorted()).toEqual([
+    expect(
+      gatewayGroups.flatMap((group) => group.configs).toSorted((a, b) => a.localeCompare(b)),
+    ).toEqual([
       "test/vitest/vitest.gateway-methods-isolated.config.ts",
       "test/vitest/vitest.gateway-methods.config.ts",
     ]);
@@ -1044,6 +1058,8 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     const qaConfig = "test/vitest/vitest.extension-qa.config.ts";
     const runtimeTargets = [
       "test/e2e/qa-lab/runtime/gateway-support-export-runtime.test.ts",
+      "src/commands/doctor-config-preflight.process.test.ts",
+      "src/commands/doctor-config-preflight.v17-atomicity.process.test.ts",
       "src/gateway/gateway-active-memory.test.ts",
       "src/gateway/gateway-concurrent-streams.test.ts",
       "src/gateway/gateway-cron-process-identity.windows.test.ts",
@@ -1076,9 +1092,38 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
   });
 
   it("splits tooling checks independently from built artifacts", () => {
+    const compilerFixture = "test/scripts/write-unified-entry-dts.test.ts";
     const toolingShards = createNodeTestShards().filter((shard) =>
       shard.shardName.startsWith("core-tooling"),
     );
+    const compilerParent = toolingShards.find((shard) =>
+      shard.includePatterns?.includes(compilerFixture),
+    )!;
+    for (const runnerBackend of ["blacksmith", "hybrid", "github"]) {
+      const jobs = createNodeTestShardBundles({ compactMode: "pull-request", runnerBackend });
+      const owner = jobs.find((job) =>
+        job.groups.some((group) => group.includePatterns?.includes(compilerFixture)),
+      );
+      // This fixture runs the real full-build guard, which needs more than the
+      // available heap observed inside a small runner's retained tooling graph.
+      expect(owner?.runner, runnerBackend).toBe(DEFAULT_NODE_TEST_RUNNER);
+      expect(
+        jobs
+          .flatMap((job) => job.groups)
+          .filter((group) => group.includePatterns?.includes(compilerFixture)),
+      ).toHaveLength(1);
+      if (runnerBackend !== "blacksmith") {
+        const siblings = jobs
+          .flatMap((job) => job.groups)
+          .filter(
+            (group) =>
+              group.shard_name.startsWith(`${compilerParent.shardName}-hosted-`) &&
+              !group.includePatterns?.includes(compilerFixture),
+          );
+        expect(siblings.length).toBeGreaterThan(0);
+        expect(siblings.every((group) => group.runner === BUNDLED_NODE_TEST_RUNNER)).toBe(true);
+      }
+    }
 
     const stripes = toolingShards.filter((shard) => /^core-tooling-\d+$/u.test(shard.shardName));
     expect(stripes).toHaveLength(16);

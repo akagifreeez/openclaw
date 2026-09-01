@@ -4510,8 +4510,6 @@ export const en: TranslationMap = {
     },
   },
   attention: {
-    custodianAlertAria: "Ask OpenClaw, {count} undismissed alert",
-    custodianAlertsAria: "Ask OpenClaw, {count} undismissed alerts",
     cronErrorUnknown: "Unknown error",
     cronFailed: "{job} failed",
     cronOverdue: "{job} overdue",
@@ -5726,6 +5724,16 @@ export const en: TranslationMap = {
     },
     markdown: {
       truncated: "… truncated ({total} chars, showing first {shown}).",
+    },
+    mermaid: {
+      title: "Mermaid diagram",
+      options: "Diagram options",
+      diagram: "Show diagram",
+      source: "Show source",
+      copySource: "Copy source",
+      expand: "Expand diagram",
+      rendering: "Rendering diagram…",
+      error: "This diagram could not be rendered. Check the source or simplify the diagram.",
     },
     codeBlock: {
       languageFallback: "Code",

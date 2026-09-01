@@ -16,6 +16,7 @@ import {
 import { fullSuiteVitestShards } from "../../test/vitest/vitest.test-shards.mjs";
 import { toolingIsolatedTestFiles } from "../../test/vitest/vitest.tooling-isolated-paths.mjs";
 import { uiIsolatedTestFiles } from "../../test/vitest/vitest.ui-isolated-paths.mjs";
+import { isUiBrowserTestFile } from "../../test/vitest/vitest.ui-paths.mjs";
 import {
   getUnitFastIsolatedTestFiles,
   getUnitFastTestFiles,
@@ -160,7 +161,11 @@ const EXCLUDED_FULL_SUITE_SHARDS = new Set([
   "test/vitest/vitest.full-extensions.config.ts",
 ]);
 
-const EXCLUDED_PROJECT_CONFIGS = new Set(["test/vitest/vitest.channels.config.ts"]);
+const EXCLUDED_PROJECT_CONFIGS = new Set([
+  "test/vitest/vitest.channels.config.ts",
+  // checks-ui owns the Chromium project; Node stripes retain Node-driven Playwright tests.
+  "test/vitest/vitest.ui-browser.config.ts",
+]);
 const DEFAULT_NODE_TEST_RUNNER = "blacksmith-8vcpu-ubuntu-2404";
 const BUNDLED_NODE_TEST_RUNNER = "blacksmith-4vcpu-ubuntu-2404";
 // Startup-core transforms the broad gateway graph before its assertions run.
@@ -1647,7 +1652,10 @@ function createCoreRuntimeMediaUiSplitShards(): NodeTestSplitShard[] {
   const unitFastFiles = new Set(getUnitFastTestFiles());
   const isolatedUiFiles = new Set(uiIsolatedTestFiles);
   const files = listTestFiles("ui/src").filter(
-    (file) => isStripeEligibleTestFile(file, unitFastFiles) && !isolatedUiFiles.has(file),
+    (file) =>
+      isStripeEligibleTestFile(file, unitFastFiles) &&
+      !isolatedUiFiles.has(file) &&
+      !isUiBrowserTestFile(file),
   );
   return [
     ...createStripedSplitShards({
@@ -2026,7 +2034,10 @@ function resolveCiNodeTestRunner(shard: NodeTestShard): string {
   if (shard.runner !== DEFAULT_NODE_TEST_RUNNER) {
     return shard.runner;
   }
-  return KEEP_LARGE_NODE_TEST_RUNNER.has(shard.shardName)
+  // The full-build compiler fixture must pass the real 4352MB heap guard even
+  // after earlier tooling tests have retained their module graphs.
+  return KEEP_LARGE_NODE_TEST_RUNNER.has(shard.shardName) ||
+    shard.includePatterns?.includes("test/scripts/write-unified-entry-dts.test.ts")
     ? DEFAULT_NODE_TEST_RUNNER
     : BUNDLED_NODE_TEST_RUNNER;
 }
@@ -2313,8 +2324,6 @@ function createCompactNodeTestShardBundles(
 
   for (const shard of shards) {
     const runner = resolveCiNodeTestRunner(shard);
-    const key = JSON.stringify([runner, shard.requiresDist]);
-    const groups = groupsByRunner.get(key) ?? [];
     const group = applyCompactGroupWorkerPins({
       configs: shard.configs,
       ...(shard.env ? { env: shard.env } : {}),
@@ -2328,7 +2337,14 @@ function createCompactNodeTestShardBundles(
       ? splitOversizedCompactGroup(group, options.runnerBackend)
       : [{ group, seconds: estimateCompactGroupSeconds(group, options.runnerBackend) }];
     for (const planned of plannedGroups) {
+      planned.group.runner = resolveCiNodeTestRunner({
+        ...shard,
+        includePatterns: planned.group.includePatterns,
+      });
+      const key = JSON.stringify([planned.group.runner, shard.requiresDist]);
+      const groups = groupsByRunner.get(key) ?? [];
       groups.push(planned.group);
+      groupsByRunner.set(key, groups);
       // A divided parent estimate covers only unmeasured hosted stripes. Once
       // sampled, the child's runner-specific timing owns admission.
       if (
@@ -2340,7 +2356,6 @@ function createCompactNodeTestShardBundles(
         synthesizedSplitSeconds.set(planned.group.shard_name, planned.seconds);
       }
     }
-    groupsByRunner.set(key, groups);
   }
 
   const compactJobs: CompactNodeTestShard[] = [];
