@@ -296,6 +296,7 @@ export class ChatPane extends ChatPaneLayoutRender {
           canSelectFull: hasOperatorAdminAccess(gatewaySnapshot.hello?.auth ?? null),
           onModelSetup: () => this.context.navigate("model-setup"),
         });
+    const composerState = getChatComposerState(this.presentationId);
     const props: ChatProps = {
       transcript: this.transcript,
       paneId: this.presentationId,
@@ -446,7 +447,10 @@ export class ChatPane extends ChatPaneLayoutRender {
             state,
             selectedSession,
             currentAgentId,
-            getChatComposerState(this.presentationId).capabilityMenuView.startsWith("tools:"),
+            composerState.capabilityMenuView.startsWith("tools:"),
+            composerState.capabilityMenuOpen &&
+              (composerState.capabilityMenuView === "skills" ||
+                composerState.capabilityMenuView.startsWith("library:")),
           ),
       swarmSessions: this.swarmHydrator?.rows ?? [],
       sessionHost: {

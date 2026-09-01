@@ -143,6 +143,7 @@ function createStaleReplySessionInitializationResult(
  * transaction and keep archive failure warning-only, matching file storage.
  */
 export async function commitReplySessionInitialization(params: {
+  commitGuard?: () => void;
   activeSessionKey: string;
   agentId: string;
   archivePreviousTranscript?: boolean;
@@ -263,6 +264,7 @@ export async function commitReplySessionInitialization(params: {
       maintenanceOverride: params.maintenanceConfig,
       storePath,
       upserts,
+      beforeCommitInTransaction: params.commitGuard,
     });
   } catch (error) {
     if (

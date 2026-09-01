@@ -63,6 +63,7 @@ const PROFILE_DEPENDENT_CORE_PREFIXES = [
   "tasks.",
   "terminal.",
   "users.prefs.",
+  "skills.library.",
 ] as const;
 
 /** Classifies core methods whose behavior reads or mutates durable user/session ownership. */
@@ -232,6 +233,13 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["artifacts.get", "artifacts", "operator.read", "<=2026.7"],
   ["artifacts.download", "artifacts", "operator.read", "<=2026.7"],
   ["skills.status", "skills", "operator.read", "<=2026.7"],
+  ["skills.library.list", "skills", "operator.read", "2026.8"],
+  ["skills.library.read", "skills", "operator.read", "2026.8"],
+  ["skills.library.save", "skills", "operator.write", "2026.8"],
+  ["skills.library.mutate", "skills", "operator.write", "2026.8"],
+  ["skills.library.activate", "skills", "operator.write", "2026.8"],
+  ["skills.library.import", "skills", "operator.write", "2026.8"],
+  ["skills.library.upload", "skills", "operator.write", "2026.8"],
   ["skills.search", "skills", "operator.read", "<=2026.7"],
   ["skills.detail", "skills", "operator.read", "<=2026.7"],
   ["skills.securityVerdicts", "skills", "operator.read", "<=2026.7"],

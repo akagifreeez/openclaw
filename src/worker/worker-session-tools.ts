@@ -16,6 +16,11 @@ import {
   type WorkerSessionsSpawnParams,
   type WorkerSessionsSpawnResponseFrame,
 } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
+import type {
+  WorkerSkillWorkshopBinding,
+  WorkerSkillWorkshopParams,
+  WorkerSkillWorkshopResponseFrame,
+} from "../../packages/gateway-protocol/src/schema/worker-skill-workshop.js";
 import type { AgentToolResult } from "../agents/runtime/index.js";
 import { SESSIONS_SEND_RESULT_GUIDANCE } from "../agents/tool-description-presets.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
@@ -24,8 +29,16 @@ import {
   PortalOutputSchema,
   PortalToolSchema,
 } from "../agents/tools/portal-tool-contract.js";
+import {
+  createLibrarySkillWorkshopTool,
+  type SkillLibraryWorkshopParams,
+  SkillLibraryWorkshopSchema,
+} from "../agents/tools/skill-workshop-tool-library.js";
 
 type WorkerSessionRpcClient = {
+  requestSkillWorkshop?(
+    params: WorkerSkillWorkshopParams,
+  ): Promise<WorkerSkillWorkshopResponseFrame>;
   requestSessionsSpawn(
     params: WorkerSessionsSpawnParams,
   ): Promise<WorkerSessionsSpawnResponseFrame>;
@@ -56,8 +69,45 @@ function parseToolResult(frame: WorkerSessionsSpawnResponseFrame) {
   return parsed as AgentToolResult<unknown>;
 }
 
-export function createWorkerSessionTools(client: WorkerSessionRpcClient): AnyAgentTool[] {
+export function createWorkerSessionTools(
+  client: WorkerSessionRpcClient,
+  skillAuthoring?: WorkerSkillWorkshopBinding,
+): AnyAgentTool[] {
+  const workshop = skillAuthoring
+    ? createLibrarySkillWorkshopTool({
+        target: "personal",
+        defaultTarget: "personal",
+        multipleProfiles: skillAuthoring.multipleProfiles,
+        bind: () => {},
+        invoke: async () => {
+          throw new Error("Worker authoring requires Gateway transport.");
+        },
+      })
+    : undefined;
+  if (workshop) {
+    workshop.execute = async (toolCallId, raw) => {
+      if (!Value.Check(SkillLibraryWorkshopSchema, raw) || !client.requestSkillWorkshop) {
+        throw new Error("Worker Workshop transport is unavailable or arguments are invalid.");
+      }
+      const params: SkillLibraryWorkshopParams = raw;
+      return parseToolResult(
+        await client.requestSkillWorkshop({
+          toolCallId,
+          action: params.action,
+          skillId: params.skill_id,
+          expectedRevision: params.expected_revision,
+          revision: params.revision,
+          slug: params.name,
+          content: params.proposal_content,
+          artifactPath: params.artifact_path,
+          files: params.files,
+          deleteFiles: params.delete_files,
+        }),
+      );
+    };
+  }
   return [
+    ...(workshop ? [workshop] : []),
     {
       label: "GitHub Publish",
       name: "github_publish",

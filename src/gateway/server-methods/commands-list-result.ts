@@ -25,6 +25,7 @@ import type {
   CommandArgDefinition,
 } from "../../auto-reply/commands-registry.types.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   getPluginCommandEntrySpecs,
@@ -207,6 +208,8 @@ function buildPluginCommandEntries(params: {
 
 /** Builds the public commands.list payload for an agent/provider/scope view. */
 export function buildCommandsListResult(params: {
+  sessionEntry?: SessionEntry;
+  sessionKey?: string;
   cfg: OpenClawConfig;
   agentId: string;
   provider?: string;
@@ -218,7 +221,12 @@ export function buildCommandsListResult(params: {
   const nameSurface: CommandNameSurface = scopeFilter === "text" ? "text" : "native";
   const provider = normalizeOptionalLowercaseString(params.provider);
 
-  const skillCommands = listSkillCommandsForAgents({ cfg: params.cfg, agentIds: [params.agentId] });
+  const skillCommands = listSkillCommandsForAgents({
+    cfg: params.cfg,
+    agentIds: [params.agentId],
+    sessionEntry: params.sessionEntry,
+    sessionKey: params.sessionKey,
+  });
   const chatCommands = listChatCommandsForConfig(params.cfg, { skillCommands });
   const skillsByKey = new Map(skillCommands.map((skill) => [`skill:${skill.skillName}`, skill]));
 

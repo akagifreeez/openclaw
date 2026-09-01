@@ -25,6 +25,7 @@ export async function loadControlUiSourceCatalog(
   activitySourceLocalePath: string,
   sessionPlacementSourceLocalePath: string,
   pluginConsentSourceLocalePath: string,
+  skillLibrarySourceLocalePath: string,
 ): Promise<TranslationMap> {
   const source = await loadControlUiLocaleCatalog(sourceLocalePath, "en");
   const activitySource = (
@@ -42,10 +43,22 @@ export async function loadControlUiSourceCatalog(
       registerPluginConsentEnglish: { catalog: TranslationMap };
     }>(pluginConsentSourceLocalePath)
   ).registerPluginConsentEnglish.catalog;
-  if (!source || !activitySource || !sessionPlacementSource || !pluginConsentSource) {
+  const skillLibrarySource = (
+    await importControlUiLocaleModule<{
+      registerSkillLibraryEnglish: { catalog: TranslationMap };
+    }>(skillLibrarySourceLocalePath)
+  ).registerSkillLibraryEnglish.catalog;
+  if (
+    !source ||
+    !activitySource ||
+    !sessionPlacementSource ||
+    !pluginConsentSource ||
+    !skillLibrarySource
+  ) {
     throw new Error("Control UI English source catalogs are incomplete");
   }
   return mergeControlUiTranslationMaps(
+    skillLibrarySource,
     source,
     activitySource,
     sessionPlacementSource,
@@ -58,6 +71,7 @@ export async function readControlUiSourceCatalog(
   activitySourceLocalePath: string,
   sessionPlacementSourceLocalePath: string,
   pluginConsentSourceLocalePath: string,
+  skillLibrarySourceLocalePath: string,
 ): Promise<string> {
   const sources = await Promise.all(
     [
@@ -65,6 +79,7 @@ export async function readControlUiSourceCatalog(
       activitySourceLocalePath,
       sessionPlacementSourceLocalePath,
       pluginConsentSourceLocalePath,
+      skillLibrarySourceLocalePath,
     ].map((filePath) => readFile(filePath, "utf8")),
   );
   return sources.join("\n");

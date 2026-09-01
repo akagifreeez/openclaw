@@ -97,6 +97,7 @@ import {
   classifySessionStateActor,
   registerMainSessionGroupWatch,
 } from "../../sessions/session-state-events.js";
+import { assertPreparedSkillLibrarySelection } from "../../skills/library/selection.js";
 import {
   deliveryContextFromSession,
   normalizeSessionDeliveryState,
@@ -1011,6 +1012,12 @@ async function initSessionStateAttemptLocked(
   let previousSessionMemory: SessionMemoryTranscript | undefined;
   let previousSessionResetMessages: unknown[] | undefined;
   const committed = await commitReplySessionInitialization({
+    commitGuard: !entry
+      ? () => {
+          params.signal?.throwIfAborted();
+          assertPreparedSkillLibrarySelection(ctx.SessionCreation?.skillLibrarySelections);
+        }
+      : undefined,
     activeSessionKey: sessionKey,
     agentId,
     archivePreviousTranscript: false,
