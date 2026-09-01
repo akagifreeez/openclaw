@@ -87,7 +87,7 @@ describe("openai completions DSML", () => {
         type: "text",
         text: "before  after",
         textSignature: expect.stringMatching(
-          /^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u,
+          /^\{"v":1,"id":"commentary-0-[0-9a-f]{24}","phase":"commentary"\}$/u,
         ),
       },
       {
@@ -131,7 +131,7 @@ describe("openai completions DSML", () => {
         type: "text",
         text: "I'll check",
         textSignature: expect.stringMatching(
-          /^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u,
+          /^\{"v":1,"id":"commentary-0-[0-9a-f]{24}","phase":"commentary"\}$/u,
         ),
       },
       {
@@ -183,7 +183,7 @@ describe("openai completions DSML", () => {
         type: "text",
         text: " visible",
         textSignature: expect.stringMatching(
-          /^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u,
+          /^\{"v":1,"id":"commentary-0-[0-9a-f]{24}","phase":"commentary"\}$/u,
         ),
       },
     ]);
@@ -225,7 +225,7 @@ describe("openai completions DSML", () => {
         type: "text",
         text: "before ",
         textSignature: expect.stringMatching(
-          /^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u,
+          /^\{"v":1,"id":"commentary-0-[0-9a-f]{24}","phase":"commentary"\}$/u,
         ),
       },
       {
@@ -238,7 +238,7 @@ describe("openai completions DSML", () => {
         type: "text",
         text: " after",
         textSignature: expect.stringMatching(
-          /^\{"v":1,"id":"commentary-1-[0-9a-f]{12}","phase":"commentary"\}$/u,
+          /^\{"v":1,"id":"commentary-1-[0-9a-f]{24}","phase":"commentary"\}$/u,
         ),
       },
     ]);

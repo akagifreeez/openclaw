@@ -9,7 +9,7 @@ import {
 type TestTextBlock = { type: "text"; text: string; textSignature?: string };
 
 function firstTaggedSignatureId(tags: PendingCommentaryTags): string | undefined {
-  const block = tags.keys().next().value as TestTextBlock | undefined;
+  const block = tags.keys().next().value;
   if (!block?.textSignature) {
     return undefined;
   }
@@ -29,7 +29,7 @@ describe("assistant text phase tags", () => {
     expect(tags.size).toBe(1);
     expect(JSON.parse(String(content[0]?.textSignature))).toMatchObject({
       v: 1,
-      id: expect.stringMatching(/^commentary-1-[0-9a-f]{12}$/),
+      id: expect.stringMatching(/^commentary-1-[0-9a-f]{24}$/),
       phase: "commentary",
     });
     expect(content[1]?.textSignature).toBeUndefined();

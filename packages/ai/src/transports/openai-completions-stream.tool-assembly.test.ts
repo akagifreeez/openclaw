@@ -153,7 +153,7 @@ describe("openai completions stream", () => {
       type: "text",
       text: "Use <",
       textSignature: expect.stringMatching(
-        /^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u,
+        /^\{"v":1,"id":"commentary-0-[0-9a-f]{24}","phase":"commentary"\}$/u,
       ),
     });
     expectRecordFields(output.content[1], {

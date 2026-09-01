@@ -39,7 +39,7 @@ function tagUnphasedText(
     // `<prefix>-0`) and collapses distinct stream-reconciliation rows. Entropy
     // keeps each generated identity unique per segment.
     const signature = encodeAssistantTextSignatureV1(
-      `${idPrefix}-${phaseIndex}-${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+      `${idPrefix}-${phaseIndex}-${randomUUID().replaceAll("-", "").slice(0, 24)}`,
       phase,
     );
     block.textSignature = signature;
