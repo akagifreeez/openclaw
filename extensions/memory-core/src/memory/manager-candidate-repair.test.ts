@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import type { MemorySyncParams } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { describe, expect, it, vi } from "vitest";
 import { createManagerIndexFixture } from "./manager-index.test-support.js";
 import type { MemoryIndexMeta } from "./manager-reindex-state.js";
@@ -112,4 +113,89 @@ describe("automatic candidates during provenance repair", () => {
       );
     },
   );
+
+  it("drains admitted candidate repair retries before closing the database", async () => {
+    const projectKey = "github.com/example/project";
+    await fs.writeFile(
+      path.join(fixture.paths.workspace, "MEMORY.md"),
+      `- Preserve the release preference. <!-- trigger: release local --> <!-- project: ${projectKey} -->\n`,
+    );
+    const ftsConfig = fixture.createConfig({ provider: "none", vectorEnabled: false });
+    const initial = await fixture.getFreshManager(ftsConfig, "cli");
+    await initial.sync({ reason: "cli", force: true });
+    // The existing migration will invalidate these sources on the next open.
+    const initialDb = Reflect.get(initial, "db") as DatabaseSync;
+    initialDb.exec("DELETE FROM memory_index_chunk_provenance");
+    await initial.close();
+
+    const initialization = createDeferred<void>();
+    const retryStarted = createDeferred<void>();
+    const retry = createDeferred<void>();
+    fixture.provider.providerInitGate = initialization.promise;
+    fixture.provider.providerCreationFailure = "local";
+    const upgraded = await fixture.getFreshManager(
+      fixture.createConfig({ provider: "local", vectorEnabled: false }),
+      "cli",
+    );
+    const owner = upgraded as unknown as {
+      runSync: (params?: MemorySyncParams) => Promise<void>;
+    };
+    const runSync = owner.runSync.bind(upgraded);
+    let pendingRetry: Promise<void> | undefined;
+    const retryGate = vi.spyOn(owner, "runSync").mockImplementation((params) => {
+      retryStarted.resolve();
+      pendingRetry = retry.promise.then(() => runSync(params));
+      return pendingRetry;
+    });
+    // This is the same public sync admission used by detached startup catch-up.
+    // Attach rejection handling immediately; its failed initialization is expected.
+    const startup = upgraded.sync({ reason: "session-startup-catchup" });
+    const startupOutcome = startup.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    let closing: Promise<void> | undefined;
+    let closeSettled = false;
+    try {
+      await vi.waitFor(() => expect(fixture.provider.providerCalls.at(-1)?.provider).toBe("local"));
+      await expect(
+        upgraded.listCuratedProjectCandidates({ activeProjectKeys: [projectKey] }),
+      ).resolves.toEqual([]);
+      closing = upgraded.close().then(() => {
+        closeSettled = true;
+      });
+      // Let close enter its drain before the already-running sync fails. This
+      // reproduces the original execution order without a timing-based sleep.
+      await Promise.resolve();
+      initialization.resolve();
+      await retryStarted.promise;
+      // Give teardown a turn to finish while the admitted retry remains gated.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closeSettled).toBe(false);
+      retry.resolve();
+      await closing;
+      expect(await startupOutcome).toBeInstanceOf(Error);
+
+      // Observable persistence proof: close did not merely cancel or abandon
+      // the retry; its classified candidates survive a fresh manager open.
+      const reopened = await fixture.getFreshManager(ftsConfig, "cli");
+      expect(
+        await reopened.listCuratedProjectCandidates({ activeProjectKeys: [projectKey] }),
+      ).toEqual([
+        expect.objectContaining({
+          projectKey,
+          triggers: "release local",
+          provenance: expect.objectContaining({ originClass: "agent" }),
+        }),
+      ]);
+    } finally {
+      initialization.resolve();
+      retry.resolve();
+      await startupOutcome;
+      await pendingRetry?.catch(() => undefined);
+      await closing;
+      await upgraded.close();
+      retryGate.mockRestore();
+    }
+  });
 });

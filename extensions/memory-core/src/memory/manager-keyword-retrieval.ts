@@ -123,11 +123,10 @@ export abstract class MemoryKeywordRetrieval extends MemoryProviderLifecycle {
             )
             .get() !== undefined;
         if (this.memorySourceProvenanceRepairPending) {
-          // Automatic recall runs before the model. Let the manager own and drain
-          // repair without holding the reply; unclassified sources stay excluded.
-          void this.syncAdmitted(
-            { reason: "search" },
-            { allowEmbeddingBootstrapFallback: true },
+          // Automatic recall runs before the model. Keep repair admitted for teardown
+          // without holding the reply; unclassified sources stay excluded.
+          void this.withManagerOperation(() =>
+            this.syncAdmitted({ reason: "search" }, { allowEmbeddingBootstrapFallback: true }),
           ).catch((err: unknown) => {
             log.warn(`memory sync failed (automatic candidates): ${formatErrorMessage(err)}`);
           });
