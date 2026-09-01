@@ -316,6 +316,16 @@ describe("state-dir-gateway-check", () => {
         warn: vi.fn(),
       }),
     ).rejects.toThrow("No credentials were written.");
+    // Shell-safe paths stay bare so the copied command reads like the one an operator would type.
+    await expect(
+      checkCliGatewayStateDir({
+        config: {} as OpenClawConfig,
+        command: "openclaw models auth login",
+        warn: vi.fn(),
+      }),
+    ).rejects.toThrow(
+      `OPENCLAW_STATE_DIR=${gateway} OPENCLAW_CONFIG_PATH=${path.join(gateway, "openclaw.json")} openclaw models auth login`,
+    );
     expect(write).not.toHaveBeenCalled();
     expect(mocks.callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
