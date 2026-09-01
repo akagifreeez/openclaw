@@ -219,9 +219,22 @@ function withCandidateSnapshot<T>(
 ): T {
   const snapshotRoot = mkdtempSync(join(tmpdir(), "openclaw-release-candidate-"));
   try {
+    // Only the immediate children of each package directory are ever kept, so list those
+    // directories instead of recursing. A recursive listing emits every tracked file under
+    // extensions/ and packages/ (~1.0MB today) and trips execFileSync's 1MB default maxBuffer
+    // with ENOBUFS once the repository grows past it.
+    const packageDirs = execFileSync(
+      "git",
+      ["ls-tree", "-z", "--name-only", candidateSha, "--", "extensions/", "packages/"],
+      { cwd: repoRoot },
+    )
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean)
+      .map((dir) => `${dir}/`);
     const tree = execFileSync(
       "git",
-      ["ls-tree", "-r", "-z", candidateSha, "--", "package.json", "extensions", "packages"],
+      ["ls-tree", "-z", candidateSha, "--", "package.json", ...packageDirs],
       { cwd: repoRoot },
     ).toString("utf8");
     const inventoryPaths: string[] = [];
