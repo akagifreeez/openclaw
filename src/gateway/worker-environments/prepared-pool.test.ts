@@ -12,11 +12,12 @@ import {
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
 import { hashWorkerCredential } from "./credential.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import { createWorkerSessionPlacementStore } from "./placement-store.js";
 import type { WorkerProviderPreparedIntent } from "./preparation-identity.js";
 import { createPreparedWorkerPool } from "./prepared-pool.js";
 import { createWorkerEnvironmentService, type WorkerEnvironmentService } from "./service.js";
-import { createWorkerEnvironmentStore, type WorkerEnvironmentRecord } from "./store.js";
+import { createWorkerEnvironmentStore } from "./store.js";
 
 const PROJECT_KEY = "a".repeat(64);
 const PREPARATION_KEY = "b".repeat(64);

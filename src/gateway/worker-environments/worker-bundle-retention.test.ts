@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import type { WorkerSessionPlacementRecord } from "./placement-store.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 import { listRetainedWorkerBundleHashes } from "./worker-bundle-retention.js";
 
 const hash = (value: string) => value.repeat(64);

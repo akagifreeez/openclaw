@@ -9,11 +9,11 @@ import { listDevicePairing, type PairedDevice } from "../../infra/device-pairing
 import { NODE_RUNNER_UPDATE_REQUIRED_ISSUE } from "../../infra/node-runner-inventory.js";
 import { NODE_DESKTOP_STREAM_COMMAND } from "../../shared/node-desktop-stream.js";
 import { collectNodeCatalogRuntimeState } from "../node-registry-private.js";
+import type { WorkerEnvironmentRecord } from "../worker-environments/environment-record.js";
 import type {
   WorkerEnvironmentServiceContract,
   WorkerEnvironmentServiceRecord,
 } from "../worker-environments/service-contract.js";
-import type { WorkerEnvironmentRecord } from "../worker-environments/store.js";
 import { environmentsHandlers, summarizeWorkerEnvironment } from "./environments.js";
 
 vi.mock("../../infra/device-pairing.js", async (importOriginal) => ({

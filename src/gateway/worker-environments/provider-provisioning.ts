@@ -7,6 +7,10 @@ import {
   type WorkerProvider,
 } from "../../plugins/types.js";
 import type { WorkerInstallationArtifact } from "./bundle.js";
+import type {
+  WorkerEnvironmentRecord,
+  WorkerEnvironmentTransitionPatch,
+} from "./environment-record.js";
 import { readWorkerProjectPreparation } from "./preparation-identity.js";
 import {
   createWorkerProjectPreparation,
@@ -20,7 +24,6 @@ import {
   requireWorkerLease,
   resolveWorkerLeaseTransportError,
 } from "./service-validation.js";
-import type { WorkerEnvironmentRecord, WorkerEnvironmentTransitionPatch } from "./store.js";
 import { boundedWorkerError as boundedError } from "./worker-error.js";
 
 type WorkerProviderProvisioningOptions = Pick<

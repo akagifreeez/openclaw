@@ -24,12 +24,12 @@ import type { NodeRegistry, NodeSession } from "../node-registry.js";
 import type { GatewayRequestContext } from "../server-methods/types.js";
 import { createWorkerComputerTransportOwner } from "./computer-transport.js";
 import type { WorkerConnectionIdentity } from "./connection-identity.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import {
   isCurrentPlacementTurnClaim,
   type WorkerSessionPlacementRecord,
   type WorkerSessionTurnClaim,
 } from "./placement-record.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 
 export const COMPUTER_USE: ComputerUseCapabilityDescriptor = {
   contractVersion: 2,

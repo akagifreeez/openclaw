@@ -4,6 +4,10 @@ import { validateCloudWorkerProfileSettings } from "../../config/zod-schema.clou
 import type { WorkerProfile, WorkerProvider } from "../../plugins/types.js";
 import { verifyWorkerAdmissionHandshake } from "./admission.js";
 import type { WorkerInstallationArtifact } from "./bundle.js";
+import type {
+  WorkerEnvironmentRecord,
+  WorkerEnvironmentTransitionPatch as TransitionPatch,
+} from "./environment-record.js";
 import { createWorkerProviderIntent } from "./provider-intent.js";
 import type { WorkerProviderLifecycleOptions } from "./provider-lifecycle.types.js";
 import { createWorkerNodeProvisioning } from "./provider-node-provisioning.js";
@@ -19,10 +23,6 @@ import {
   requireWorkerAllocation,
   requireWorkerLeaseStatus,
 } from "./service-validation.js";
-import type {
-  WorkerEnvironmentRecord,
-  WorkerEnvironmentTransitionPatch as TransitionPatch,
-} from "./store.js";
 import { boundedWorkerError as boundedError } from "./worker-error.js";
 
 const ORPHANED_LEASE_ERROR = "Worker provider no longer recognizes the lease";

@@ -31,6 +31,7 @@ import type {
   NodeWorkerSupervisorNodeProof,
   NodeWorkerSupervisorTransport,
 } from "../node-registry-private.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import {
   measureNodeWorkerLaunchBytes,
   type createNodeWorkerLaunchAdapter,
@@ -44,7 +45,6 @@ import {
 import type { NodeWorkspaceTransferService } from "./node-workspace-transfer-service.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
 import { readWorkerProjectPreparation } from "./preparation-identity.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 import {
   WorkerTunnelOwnerDisconnectedError,
   type WorkerTunnelStopReason,

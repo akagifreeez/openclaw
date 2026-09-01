@@ -1,6 +1,6 @@
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import type { WorkerSessionPlacementRecord } from "./placement-store.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 
 const TERMINAL_ENVIRONMENT_STATES = new Set(["destroyed", "failed", "orphaned"]);
 const RECOVERY_BUNDLE_PLACEMENT_STATES = new Set([

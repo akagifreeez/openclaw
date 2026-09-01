@@ -11,15 +11,15 @@ import type {
 } from "../../plugins/types.js";
 import type { WorkerInstallationArtifact } from "./bundle.js";
 import type { WorkerCredentialBroker } from "./credential-broker.js";
+import type {
+  WorkerEnvironmentRecord,
+  WorkerEnvironmentTransitionPatch,
+} from "./environment-record.js";
 import type { WorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import type { WorkerPreparationArtifacts } from "./preparation-identity.js";
 import type { createWorkerProjectPreparation } from "./project-preparation.js";
 import type { WorkerEnvironmentState } from "./state.js";
-import type {
-  WorkerEnvironmentRecord,
-  WorkerEnvironmentStore,
-  WorkerEnvironmentTransitionPatch,
-} from "./store.js";
+import type { WorkerEnvironmentStore } from "./store.js";
 import type { WorkerTunnelStopReason } from "./tunnel-contract.js";
 
 export type WorkerProviderLifecycleInputOptions = {

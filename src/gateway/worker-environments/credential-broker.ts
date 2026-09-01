@@ -15,17 +15,16 @@ import {
   type MintedWorkerCredential,
   type WorkerCredentialBinding,
 } from "./credential.js";
+import type {
+  PreparedEnvironmentPlacementBinding,
+  WorkerEnvironmentRecord,
+  WorkerEnvironmentTransitionPatch,
+} from "./environment-record.js";
 import type { WorkerLiveEventReceiver } from "./live-events.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
 import type { WorkerSessionPlacementGate } from "./placement-worker-gate.js";
-import type { PreparedEnvironmentPlacementBinding } from "./prepared-environment-store.js";
 import type { WorkerEnvironmentState } from "./state.js";
-import {
-  type WorkerEnvironmentRecord,
-  type WorkerEnvironmentStore,
-  type WorkerEnvironmentTransitionPatch,
-  WorkerSessionAlreadyAttachedError,
-} from "./store.js";
+import { type WorkerEnvironmentStore, WorkerSessionAlreadyAttachedError } from "./store.js";
 import type { WorkerTunnelManager } from "./tunnel.js";
 
 type WorkerCredentialBrokerOptions = {

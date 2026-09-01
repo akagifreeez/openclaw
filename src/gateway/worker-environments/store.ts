@@ -5,7 +5,6 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeSortedUniqueTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { Insertable, Selectable, Updateable } from "kysely";
 import {
-  type WorkerAdmissionHandshake,
   WORKER_PROTOCOL_MAX_FEATURE_LENGTH,
   WORKER_PROTOCOL_MAX_FEATURES,
   WORKER_PROTOCOL_MAX_IDENTIFIER_LENGTH,
@@ -35,63 +34,31 @@ import {
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
 import type { WorkerCredentialRecord } from "./credential.js";
+import type {
+  PreparedEnvironmentPlacementBinding,
+  WorkerEnvironmentBootstrapReceipt,
+  WorkerEnvironmentCredentialInput as CredentialInput,
+  WorkerEnvironmentIntentInput,
+  WorkerEnvironmentRecord,
+  WorkerEnvironmentTeardownTerminalState,
+  WorkerEnvironmentTransitionPatch,
+} from "./environment-record.js";
 import {
   assertPreparedEnvironmentAttachment,
   createPreparedEnvironmentStoreOps,
   readWorkerEnvironmentPreparation,
   workerEnvironmentPreparationColumns,
-  type PreparedEnvironmentPlacementBinding,
-  type WorkerEnvironmentPreparation,
-  type WorkerEnvironmentPreparationIntent,
 } from "./prepared-environment-store.js";
 import {
   canTransitionWorkerEnvironment,
   parseWorkerEnvironmentState,
   workerEnvironmentStateRequiresLease,
-  type WorkerEnvironmentLeasedState,
   type WorkerEnvironmentState,
-  type WorkerEnvironmentUnleasedState,
 } from "./state.js";
 import { pruneExpiredTerminalWorkerEnvironments } from "./terminal-environment-retention.js";
 
 type WorkerEnvironmentProfileSnapshot = WorkerProfile;
-type WorkerEnvironmentSshEndpoint = WorkerSshEndpoint;
-type WorkerBootstrapInstallKind = "bundle" | "local";
-type WorkerEnvironmentBootstrapReceipt = WorkerAdmissionHandshake & {
-  /** Provenance only; admission authority remains the exact stored build identity. */
-  installKind?: WorkerBootstrapInstallKind;
-};
-type WorkerEnvironmentTeardownTerminalState = "destroyed" | "failed";
-type RecordIdentity = { environmentId: string; providerId: string; profileId: string };
-type RecordBase = RecordIdentity & {
-  profileSnapshot: WorkerEnvironmentProfileSnapshot;
-  preparation: WorkerEnvironmentPreparation | null;
-  provisionOperationId: string;
-  nodeSetupId: string | null;
-  nodeDeviceId: string | null;
-  sharedHost: boolean | null;
-  desktop: WorkerDesktopEndpoint | null;
-  bootstrapReceipt: WorkerEnvironmentBootstrapReceipt | null;
-  ownerEpoch: number;
-  teardownTerminalState: WorkerEnvironmentTeardownTerminalState | null;
-  attachedSessionIds: string[];
-  lastError: string | null;
-} & { createdAtMs: number; updatedAtMs: number; stateChangedAtMs: number } & {
-  idleSinceAtMs: number | null;
-  destroyRequestedAtMs: number | null;
-};
-type Ssh = WorkerEnvironmentSshEndpoint;
-type UnleasedRecord = {
-  state: WorkerEnvironmentUnleasedState;
-  leaseId: null;
-  sshEndpoint: null;
-};
-type LeasedRecord = {
-  state: WorkerEnvironmentLeasedState;
-  leaseId: string;
-  sshEndpoint: Ssh | null;
-};
-export type WorkerEnvironmentRecord = RecordBase & (UnleasedRecord | LeasedRecord);
+type Ssh = WorkerSshEndpoint;
 export class WorkerSessionAlreadyAttachedError extends Error {
   constructor(
     readonly sessionId: string,
@@ -100,17 +67,6 @@ export class WorkerSessionAlreadyAttachedError extends Error {
     super(`Session ${sessionId} is already attached to worker environment ${environmentId}`);
   }
 }
-export type WorkerEnvironmentTransitionPatch = {
-  leaseId?: string | null;
-  nodeDeviceId?: string | null;
-  sshEndpoint?: WorkerEnvironmentSshEndpoint | null;
-  sharedHost?: boolean;
-  desktop?: WorkerDesktopEndpoint | null;
-  bootstrapReceipt?: WorkerEnvironmentBootstrapReceipt;
-  attachedSessionIds?: readonly string[];
-  lastError?: string | null;
-  credential?: CredentialInput;
-};
 type WorkerDb = Pick<
   StateDatabase,
   | "device_pair_setup_completions"
@@ -125,17 +81,6 @@ type RowUpdate = Updateable<WorkerEnvironments>;
 type SshFallbackPortInsert = Insertable<WorkerEnvironmentSshFallbackPorts>;
 type CredentialRow = Selectable<WorkerEnvironmentCredentials>;
 type CredentialInsert = Insertable<WorkerEnvironmentCredentials>;
-type CredentialInput = {
-  credentialHash: string;
-  sessionId: string | null;
-  rpcSetVersion: number;
-  expiresAtMs: number;
-};
-export type WorkerEnvironmentIntentInput = RecordIdentity & {
-  preparation?: WorkerEnvironmentPreparationIntent;
-  profileSnapshot: WorkerEnvironmentProfileSnapshot;
-  provisionOperationId: string;
-};
 type TransitionInput = {
   environmentId: string;
   from: WorkerEnvironmentState;

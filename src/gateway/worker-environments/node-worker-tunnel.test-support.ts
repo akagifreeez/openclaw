@@ -8,8 +8,8 @@ import { NODE_WORKER_ENVIRONMENT_STOP_COMMAND } from "../../infra/node-commands.
 import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
 import type { SpawnResult } from "../../process/exec.js";
 import type { NodeWorkerSupervisorTransport } from "../node-registry-private.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import type { NodeWorkspaceTransferService } from "./node-workspace-transfer-service.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 
 export const BUILD = {
   bundleHash: "a".repeat(64),

@@ -2,6 +2,7 @@ import fsp from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeCapabilityProviderId } from "../../plugins/provider-registry-shared.js";
 import type { WorkerExecutionMode, WorkerProfile, WorkerProvider } from "../../plugins/types.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import {
   createWorkerProjectPreparationIdentity,
   readWorkerProjectPreparation,
@@ -11,7 +12,6 @@ import { readWorkerProjectSetupRecipe, readWorkerProjectSnapshot } from "./proje
 import type { WorkerProviderLifecycleOptions } from "./provider-lifecycle.types.js";
 import { deriveEnvironmentIntent } from "./service-contract.js";
 import { requireInheritedWorkerProfileAuthorization } from "./service-validation.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 import { prepareWorkerProjectSnapshot } from "./workspace-git-base.js";
 
 type WorkerProviderIntentOptions = Pick<

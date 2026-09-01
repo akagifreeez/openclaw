@@ -13,8 +13,9 @@ import type {
   NodeWorkerSupervisorNodeProof,
   NodeWorkerSupervisorTransport,
 } from "../node-registry-private.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import type { WorkerDesktopObserveResult } from "./service-contract.js";
-import type { WorkerEnvironmentRecord, WorkerEnvironmentStore } from "./store.js";
+import type { WorkerEnvironmentStore } from "./store.js";
 
 const APP_LAUNCH_TIMEOUT_MS = 30_000;
 

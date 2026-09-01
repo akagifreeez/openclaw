@@ -17,9 +17,10 @@ import { workerBundleArchiveRelativePath } from "../../shared/worker-bundle-hash
 import { WORKER_BOOTSTRAP_ARTIFACT_TRANSFER_PATH } from "../gateway-http-route-contracts.js";
 import type { TransferArtifact } from "./artifact-transfer-service.js";
 import type { DeviceWorkerAvailability } from "./device-provider.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import type { NodeBootstrapArtifact } from "./node-bootstrap-artifact.js";
 import { readWorkerProjectPreparation } from "./preparation-identity.js";
-import type { WorkerEnvironmentRecord, WorkerEnvironmentStore } from "./store.js";
+import type { WorkerEnvironmentStore } from "./store.js";
 import type { WorkerBootstrapArtifactTransferService } from "./worker-bootstrap-artifact-transfer-service.js";
 
 const NODE_ENROLLMENT_TIMEOUT_MS = 10 * 60_000;

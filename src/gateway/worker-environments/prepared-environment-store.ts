@@ -9,24 +9,16 @@ import {
 } from "../../infra/kysely-sync.js";
 import type { DB, WorkerEnvironments } from "../../state/openclaw-state-db.generated.js";
 import type {
-  WorkerSessionPlacementDispatchIdentity,
-  WorkerSessionPlacementRecord,
-} from "./placement-record.js";
+  PreparedEnvironmentPlacementBinding,
+  PreparedEnvironmentSelection,
+  WorkerEnvironmentIntentInput,
+  WorkerEnvironmentPreparation,
+  WorkerEnvironmentPreparationIntent,
+  WorkerEnvironmentRecord,
+} from "./environment-record.js";
+import type { WorkerSessionPlacementRecord } from "./placement-record.js";
 import { find as findPlacement } from "./placement-row-codec.js";
-import type { WorkerEnvironmentIntentInput, WorkerEnvironmentRecord } from "./store.js";
 
-export type WorkerEnvironmentPreparation = {
-  key: string;
-  demandAtMs: number;
-  expiresAtMs: number;
-  consumedAtMs: number | null;
-};
-export type WorkerEnvironmentPreparationIntent = Omit<WorkerEnvironmentPreparation, "consumedAtMs">;
-export type PreparedEnvironmentPlacementBinding = WorkerSessionPlacementDispatchIdentity & {
-  generation: number;
-  preparationKey: string;
-  assertCurrent: () => void;
-};
 type PreparationRow = Pick<
   Selectable<WorkerEnvironments>,
   | "preparation_key"
@@ -234,19 +226,6 @@ export function createPreparedEnvironmentStoreOps(options: {
     },
   };
 }
-
-export type PreparedEnvironmentSelection = WorkerSessionPlacementDispatchIdentity & {
-  expectedGeneration: number;
-  environmentId: string;
-  ownerEpoch: number;
-  providerId: string;
-  profileId: string;
-  preparationKey: string;
-  nodeDeviceId: string;
-  leaseId: string;
-  bundleHash: string;
-  assertCurrent: () => void;
-};
 
 /** Placement and consumption commit together; dropping a placement never recreates a spare. */
 export function consumePreparedEnvironment(

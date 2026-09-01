@@ -6,6 +6,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
+import type { PreparedEnvironmentSelection } from "./environment-record.js";
 import { drainWorkerSessionPlacement } from "./placement-drain.js";
 import { createPlacementMoveOps } from "./placement-move-intent.js";
 import { createPlacementPendingFailureOps } from "./placement-pending-failure.js";
@@ -54,10 +55,7 @@ import {
   hasCurrentWorkspaceResultClaim,
   hasWorkerWorkspacePendingResult,
 } from "./placement-workspace-result.js";
-import {
-  consumePreparedEnvironment,
-  type PreparedEnvironmentSelection,
-} from "./prepared-environment-store.js";
+import { consumePreparedEnvironment } from "./prepared-environment-store.js";
 import { boundedWorkerError } from "./worker-error.js";
 import { projectWorkspaceResultConflict } from "./workspace-conflicts.js";
 

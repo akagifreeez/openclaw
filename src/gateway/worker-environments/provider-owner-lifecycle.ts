@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import type { WorkerProvider } from "../../plugins/types.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
 import type { WorkerProviderLifecycleOptions } from "./provider-lifecycle.types.js";
 import { requireProviderOperationTimeoutMs } from "./service-validation.js";
-import type { WorkerEnvironmentRecord } from "./store.js";
 import type { WorkerTunnelStopReason } from "./tunnel-contract.js";
 
 export function createWorkerProviderOwnerLifecycle(

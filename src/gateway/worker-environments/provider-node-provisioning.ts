@@ -7,11 +7,14 @@ import type {
 } from "../../plugins/types.js";
 import type { WorkerInstallationArtifact } from "./bundle.js";
 import type { WorkerCredentialBroker } from "./credential-broker.js";
+import type {
+  WorkerEnvironmentRecord,
+  WorkerEnvironmentTransitionPatch,
+} from "./environment-record.js";
 import { readWorkerProjectPreparation } from "./preparation-identity.js";
 import type { createWorkerProjectPreparation } from "./project-preparation.js";
 import type { WorkerProviderLifecycleOptions } from "./provider-lifecycle.types.js";
 import type { createWorkerProvisionCancellation } from "./provider-provisioning-cancellation.js";
-import type { WorkerEnvironmentRecord, WorkerEnvironmentTransitionPatch } from "./store.js";
 import { boundedWorkerError as boundedError } from "./worker-error.js";
 
 type NodeLease = Extract<WorkerLease, { node: { deviceId: string } }>;

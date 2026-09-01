@@ -6,7 +6,8 @@ import type {
   NodeWorkerSupervisorNodeProof,
   NodeWorkerSupervisorTransport,
 } from "../node-registry-private.js";
-import type { WorkerEnvironmentRecord, WorkerEnvironmentStore } from "./store.js";
+import type { WorkerEnvironmentRecord } from "./environment-record.js";
+import type { WorkerEnvironmentStore } from "./store.js";
 
 type NodePortalBinding = {
   environmentId: string;

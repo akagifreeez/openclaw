@@ -8,9 +8,12 @@ import {
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
 import { hashWorkerCredential } from "./credential.js";
+import type {
+  PreparedEnvironmentSelection,
+  WorkerEnvironmentIntentInput,
+} from "./environment-record.js";
 import { createWorkerSessionPlacementStore } from "./placement-store.js";
-import type { PreparedEnvironmentSelection } from "./prepared-environment-store.js";
-import { createWorkerEnvironmentStore, type WorkerEnvironmentIntentInput } from "./store.js";
+import { createWorkerEnvironmentStore } from "./store.js";
 
 const PROJECT_KEY = "a".repeat(64);
 const PREPARATION_KEY = "b".repeat(64);
