@@ -1758,7 +1758,7 @@ describe("RealtimeCallHandler path routing", () => {
 
   describe.each(["forced", "native", "general"] as const)("%s host tool outcomes", (path) => {
     const cancelled = { status: "cancelled", message: "Cancelled the active OpenClaw run." };
-    it.each([
+    const outcomes = [
       { label: "AbortSignal cancellation", error: AbortSignal.abort().reason, result: cancelled },
       {
         label: "named AbortError",
@@ -1783,7 +1783,15 @@ describe("RealtimeCallHandler path routing", () => {
       { label: "successful answer", result: { text: "The deployment is healthy." } },
       { label: "returned cancellation", result: { text: "", canceled: true } },
       { label: "returned timeout", result: { text: "The run timed out.", timedOut: true } },
-    ])("projects $label once per provider call while the phone stays open", async (outcome) => {
+    ];
+    it.each(
+      outcomes.flatMap((outcome) => [
+        { ...outcome, synchronous: false },
+        ...(path === "general" && "error" in outcome
+          ? [{ ...outcome, synchronous: true, label: `synchronous ${outcome.label}` }]
+          : []),
+      ]),
+    )("projects $label once per provider call while the phone stays open", async (outcome) => {
       let callbacks: RealtimeBridgeRequest | undefined;
       const submitToolResult = vi.fn();
       const sendUserMessage = vi.fn();
@@ -1806,9 +1814,12 @@ describe("RealtimeCallHandler path routing", () => {
         },
       );
       const pending = createDeferred<unknown>();
-      const hostTool = vi.fn(
-        (_args: unknown, _callId: string, _context: ToolHandlerContext) => pending.promise,
-      );
+      const hostTool = vi.fn((_args: unknown, _callId: string, _context: ToolHandlerContext) => {
+        if (outcome.synchronous && "error" in outcome) {
+          throw outcome.error;
+        }
+        return pending.promise;
+      });
       const name = path === "general" ? "custom_lookup" : "openclaw_agent_consult";
       handler.registerToolHandler(name, hostTool);
       const server = await startRealtimeServer(handler);
@@ -1842,7 +1853,7 @@ describe("RealtimeCallHandler path routing", () => {
           path === "general" ? undefined : false,
         );
 
-        if ("error" in outcome) {
+        if ("error" in outcome && !outcome.synchronous) {
           pending.reject(outcome.error);
         } else {
           pending.resolve(outcome.result);
