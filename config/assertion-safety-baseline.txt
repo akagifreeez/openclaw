@@ -2999,7 +2999,7 @@ src/gateway/session-utils.fs.ts	2
 src/gateway/sessions-history-http.ts	1
 src/gateway/stale-install.ts	1
 src/gateway/system-ca-warmup.ts	1
-src/gateway/talk-agent-consult.ts	3
+src/gateway/talk-agent-consult.ts	2
 src/gateway/talk-realtime-relay-forced-consults.ts	1
 src/gateway/talk-realtime-relay-session-create.ts	1
 src/gateway/terminal/node-relay.ts	1
