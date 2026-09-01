@@ -41,8 +41,6 @@ function installUpdateTranslations() {
     "updates.status": "Update {status}: {reason}. {guidance}",
     "updates.failureReasons.managedServiceHandoffAlreadyRunning":
       "Another managed update is already running. Wait for it to complete, then refresh update status.",
-    "updates.verificationFailedWithVersions":
-      "Update installed but running version did not change — restart may have been blocked. Expected v{expectedVersion}, running v{actualVersion}.",
     "updates.verificationFailedWithIdentity":
       "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}.",
     "common.unknown": "Unknown",

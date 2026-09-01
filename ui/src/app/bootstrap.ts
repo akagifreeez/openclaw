@@ -81,6 +81,7 @@ import {
   resolveTypefaces,
   syncTypefaceStylesheets,
 } from "./typography.ts";
+import { openUpdateFailureTriage } from "./update-triage.ts";
 import { createWebPushCapability } from "./web-push.ts";
 
 function applyThemePresentation(settings: ReturnType<typeof loadSettings>): void {
@@ -439,6 +440,8 @@ export function bootstrapApplication(
   const runtimeConfig = createRuntimeConfigCapability(gateway);
   const overlays = createApplicationOverlays(gateway, {
     drainConfigWrites: () => runtimeConfig.waitForPendingWrites(),
+    onUpdateFailure: (failure, admission) =>
+      void openUpdateFailureTriage(context, failure, admission),
   });
   // App-updater interlock: writing config (or restarting the gateway) while
   // the updater runs can corrupt the install; pause config writes until the

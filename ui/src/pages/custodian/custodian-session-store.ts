@@ -1,10 +1,7 @@
-import {
-  readSystemAgentInferenceUnavailableErrorDetails,
-  type SystemAgentChatParams,
-  type SystemAgentChatResult,
-} from "@openclaw/gateway-protocol";
+import type { SystemAgentChatParams, SystemAgentChatResult } from "@openclaw/gateway-protocol";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ApplicationContext } from "../../app/context.ts";
+import type { CustodianTurnAdmission } from "../../components/custodian-alert-contract.ts";
 import { t } from "../../i18n/index.ts";
 import { canCallGatewayMethod, isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { performCustodianAgentHandoff } from "./custodian-navigation.ts";
@@ -26,9 +23,10 @@ import {
 import * as eventNudgeState from "./event-nudge.ts";
 import {
   custodianChatParams,
+  custodianFailure,
   hasCustodianUserInput,
-  isCustodianSessionInvalidatedError,
   type CustodianSessionVariant,
+  type CustodianSetupIssue,
 } from "./session-lifecycle.ts";
 import { parseCustodianQuestion } from "./structured-question.ts";
 import {
@@ -44,7 +42,6 @@ const SYSTEM_AGENT_CHAT_TIMEOUT_MS = 190_000;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 
 type StoreListener = () => void;
-type CustodianSetupIssue = "missing" | "unavailable";
 
 /** One process-local conversation owner shared by the full page and dock surface. */
 export class CustodianSessionStore {
@@ -209,6 +206,7 @@ export class CustodianSessionStore {
     text = this.input,
     display?: string,
     questionReply = this.hasUnresolvedQuestion(),
+    admission?: CustodianTurnAdmission,
   ): Promise<eventNudgeState.CustodianSendOutcome> {
     // Trim decides emptiness only; sensitive values may carry meaningful whitespace.
     const message = this.sensitive ? text : text.trim();
@@ -218,15 +216,8 @@ export class CustodianSessionStore {
       return "rejected";
     }
     const displayText = this.sensitive ? t("custodian.sensitiveReply") : (display ?? message);
-    return await this.sendUserTurn(
-      client,
-      {
-        sessionId: this.sessionId,
-        ...custodianChatParams(this.variant, message),
-      },
-      displayText,
-      questionReply,
-    );
+    const params = { sessionId: this.sessionId, ...custodianChatParams(this.variant, message) };
+    return await this.sendUserTurn(client, params, displayText, questionReply, admission);
   }
 
   private async sendUserTurn(
@@ -234,6 +225,7 @@ export class CustodianSessionStore {
     params: SystemAgentChatParams,
     displayText: string,
     questionReply: boolean,
+    admission?: CustodianTurnAdmission,
   ): Promise<eventNudgeState.CustodianSendOutcome> {
     const questionState = [this.answeredQuestions, this.questionReplyUncertain] as const;
     if (questionReply) {
@@ -254,7 +246,7 @@ export class CustodianSessionStore {
     ];
     this.input = "";
     this.emit();
-    const reply = this.requestReply(client, params);
+    const reply = this.requestReply(client, params, admission);
     const replyEpoch = this.requestEpoch;
     const outcome = await reply;
     if (questionReply && this.requestEpoch === replyEpoch) {
@@ -644,16 +636,17 @@ export class CustodianSessionStore {
   private async requestReply(
     client: GatewayBrowserClient,
     params: SystemAgentChatParams,
+    admission?: CustodianTurnAdmission,
   ): Promise<eventNudgeState.CustodianSendOutcome> {
     const context = this.context;
     if (!context) {
       return "rejected";
     }
-    const snapshot = context.gateway.snapshot;
-    if (
-      snapshot.client !== client ||
-      !canCallGatewayMethod(snapshot, "openclaw.chat", "operator.admin")
-    ) {
+    const canRequest = () =>
+      client === this.activeClient &&
+      context.gateway.snapshot.client === client &&
+      canCallGatewayMethod(context.gateway.snapshot, "openclaw.chat", "operator.admin");
+    if (!canRequest()) {
       return "rejected";
     }
     this.requestAbort?.abort();
@@ -669,9 +662,21 @@ export class CustodianSessionStore {
     this.retryParams = params;
     this.emit();
     try {
+      if (
+        epoch !== this.requestEpoch ||
+        !canRequest() ||
+        (admission && (!admission.isCurrent() || !admission.admit()))
+      ) {
+        if (this.retryParams === params) {
+          this.retryParams = null;
+        }
+        return "rejected";
+      }
       const result = await client.request<SystemAgentChatResult>("openclaw.chat", params, {
         timeoutMs: SYSTEM_AGENT_CHAT_TIMEOUT_MS,
-        onSent: () => (delivery = "sent"),
+        onSent: () => {
+          delivery = "sent";
+        },
         signal: requestAbort.signal,
       });
       delivery = "received";
@@ -726,15 +731,11 @@ export class CustodianSessionStore {
     } catch (error) {
       if (epoch === this.requestEpoch && client === this.activeClient) {
         this.error = custodianErrorMessage(error);
-        const details =
-          error && typeof error === "object" ? (error as { details?: unknown }).details : undefined;
-        this.setupIssue =
-          readSystemAgentInferenceUnavailableErrorDetails(details) !== undefined
-            ? this.configuredInferenceState === "required"
-              ? "missing"
-              : "unavailable"
-            : null;
-        const sessionInvalidated = isCustodianSessionInvalidatedError(error);
+        const { setupIssue, sessionInvalidated } = custodianFailure(
+          error,
+          this.configuredInferenceState,
+        );
+        this.setupIssue = setupIssue;
         if (sessionInvalidated && hasCustodianUserInput(params)) {
           // Retained transcript rows are display context only; the next turn needs a fresh id.
           this.restartVolatileSession(client, this.variant, true);

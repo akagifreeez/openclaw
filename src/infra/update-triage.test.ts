@@ -1,0 +1,187 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { quoteCliArg } from "../cli/quote-cli-arg.js";
+import * as exec from "../process/exec.js";
+import { isPidAlive } from "../shared/pid-alive.js";
+import { runUpdateFailureTriage } from "./update-triage.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+afterEach(() => vi.restoreAllMocks());
+
+async function createInstalledTriage(params: { hang?: boolean; promptPath?: string } = {}) {
+  const root = await fs.realpath(tempDirs.make("openclaw-triage-child-"));
+  const receiptPath = path.join(root, "receipt.json");
+  const promptPath = params.promptPath ?? path.join(root, "triage-prompt.md");
+  await fs.mkdir(path.join(root, "dist"));
+  await fs.writeFile(
+    path.join(root, "dist", "index.js"),
+    `
+    const fs = require("node:fs");
+    fs.writeFileSync(${JSON.stringify(receiptPath)}, JSON.stringify({ pid: process.pid }));
+    ${params.hang ? "setInterval(() => {}, 1000);" : `process.stdout.write(JSON.stringify({ promptPath: ${JSON.stringify(promptPath)}, bundlePath: null, bundleError: "Snapshot unavailable" }));`}
+  `,
+  );
+  return {
+    receiptPath,
+    promptPath,
+    target: {
+      root,
+      nodeRunner: process.execPath,
+      env: { HOME: root, USERPROFILE: root, OPENCLAW_STATE_DIR: path.join(root, "state") },
+    },
+  };
+}
+
+describe("update triage child lifecycle", () => {
+  it("returns the fresh CLI report paths and partial-export outcome", async () => {
+    const { target, promptPath } = await createInstalledTriage();
+    const runtime = { log: vi.fn(), error: vi.fn() };
+    const result = await runUpdateFailureTriage({
+      failure: { error: "Update could not install the package" },
+      target,
+      mode: "json",
+      runtime,
+    });
+    expect(result).toMatchObject({
+      status: "completed",
+      contextPath: expect.any(String),
+      hint: `Triage prompt: ${promptPath}\nDiagnostics export unavailable: Snapshot unavailable`,
+    });
+    expect(runtime.error).not.toHaveBeenCalled();
+  });
+
+  it("does not launch diagnostics after its owner closes during root discovery", async () => {
+    const { target, receiptPath } = await createInstalledTriage();
+    let releaseRoot!: (root: string) => void;
+    let started!: () => void;
+    const discovering = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let current = true;
+    const pending = runUpdateFailureTriage({
+      failure: { error: "Update failed" },
+      target: { ...target, root: undefined },
+      resolveRoot: () =>
+        new Promise((resolve) => {
+          releaseRoot = resolve;
+          started();
+        }),
+      mode: "json",
+      runtime: { log: vi.fn(), error: vi.fn() },
+      isCurrent: () => current,
+    });
+    await discovering;
+    current = false;
+    releaseRoot(target.root);
+    expect(await pending).toEqual({ status: "cancelled" });
+    await expect(fs.stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("terminates diagnostics and suppresses publication when its scheduler stops", async () => {
+    const { target, receiptPath } = await createInstalledTriage({ hang: true });
+    const controller = new AbortController();
+    const runtime = { log: vi.fn(), error: vi.fn() };
+    const pending = runUpdateFailureTriage({
+      failure: { error: "Update failed" },
+      target,
+      mode: "json",
+      runtime,
+      signal: controller.signal,
+    });
+    try {
+      await expect
+        .poll(() => fs.readFile(receiptPath, "utf8").catch(() => ""), { timeout: 5000 })
+        .not.toBe("");
+      const { pid } = JSON.parse(await fs.readFile(receiptPath, "utf8")) as { pid: number };
+      controller.abort();
+      expect(await pending).toEqual({ status: "cancelled" });
+      await expect.poll(() => isPidAlive(pid)).toBe(false);
+      expect(runtime.log).toHaveBeenCalledExactlyOnceWith("Update failed. Entering triage...");
+      expect(runtime.error).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      await pending;
+    }
+  });
+
+  it.each(["timeout", "signal"] as const)(
+    "does not complete when a %s child exits gracefully with code zero",
+    async (termination) => {
+      const { target, promptPath } = await createInstalledTriage();
+      vi.spyOn(exec, "runCommandWithTimeout").mockResolvedValueOnce({
+        stdout: JSON.stringify({ promptPath }),
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: true,
+        termination,
+      });
+      const result = await runUpdateFailureTriage({
+        failure: { error: "Update failed" },
+        target,
+        mode: "json",
+        runtime: { log: vi.fn(), error: vi.fn() },
+      });
+      expect(result).toMatchObject({
+        status: "failed",
+        hint: expect.stringContaining(`Triage stopped (${termination})`),
+      });
+    },
+  );
+
+  it.each([
+    { name: "empty", promptPath: "" },
+    { name: "oversized", promptPath: "x".repeat(4097) },
+  ])("rejects $name report paths", async ({ promptPath }) => {
+    const { target } = await createInstalledTriage({ promptPath });
+    const result = await runUpdateFailureTriage({
+      failure: { error: "Update failed" },
+      target,
+      mode: "json",
+      runtime: { log: vi.fn(), error: vi.fn() },
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      hint: expect.stringContaining("openclaw triage"),
+    });
+  });
+
+  it("keeps a bounded diagnostic failure cause after redacting credentials", async () => {
+    const { target } = await createInstalledTriage();
+    target.env.OPENCLAW_STATE_DIR = path.join(target.root, "state directory's");
+    const configPath = path.join(target.root, "custom config.json");
+    const workspaceDir = path.join(target.root, "custom workspace");
+    const targetEnv = {
+      ...target.env,
+      OPENCLAW_CONFIG_PATH: configPath,
+      OPENCLAW_WORKSPACE_DIR: workspaceDir,
+    };
+    const credential = "synthetic-triage-bearer-value";
+    vi.spyOn(exec, "runCommandWithTimeout").mockRejectedValueOnce(
+      new Error(`ENOSPC Authorization: Bearer ${credential}\n${"detail ".repeat(1000)}`),
+    );
+    const result = await runUpdateFailureTriage({
+      failure: { error: "Update failed" },
+      target: { ...target, env: targetEnv },
+      mode: "json",
+      runtime: { log: vi.fn(), error: vi.fn() },
+    });
+    expect(result).toMatchObject({ status: "failed", hint: expect.stringContaining("ENOSPC") });
+    expect(JSON.stringify(result)).not.toContain(credential);
+    if (result.status === "failed") {
+      expect(result.hint.split("\n")[0]?.length).toBeLessThan(284);
+      expect(result.contextPath).toEqual(expect.any(String));
+      expect(result.hint).toContain(`--update-result ${quoteCliArg(result.contextPath!)}`);
+      expect(result.hint).toContain(
+        `OPENCLAW_STATE_DIR=${quoteCliArg(targetEnv.OPENCLAW_STATE_DIR)}`,
+      );
+      expect(result.hint).toContain(`OPENCLAW_CONFIG_PATH=${quoteCliArg(configPath)}`);
+      expect(result.hint).toContain(`OPENCLAW_WORKSPACE_DIR=${quoteCliArg(workspaceDir)}`);
+      await expect(fs.stat(result.contextPath!)).resolves.toMatchObject({
+        size: expect.any(Number),
+      });
+    }
+  });
+});

@@ -12,6 +12,7 @@ import { flattenTranslations } from "../../scripts/lib/control-ui-i18n-sync-plan
 import { registerActivityEnglish } from "../src/i18n/locales/en-activity.ts";
 import { registerPluginConsentEnglish } from "../src/i18n/locales/en-plugin-consent.ts";
 import { registerSessionPlacementEnglish } from "../src/i18n/locales/en-session-placement.ts";
+import { registerUpdateActionsEnglish } from "../src/i18n/locales/en-update-actions.ts";
 import { en } from "../src/i18n/locales/en.ts";
 
 const localeModulePrefix = "virtual:openclaw-control-ui-locale/";
@@ -27,6 +28,7 @@ const sourceCatalog = mergeControlUiTranslationMaps(
   registerActivityEnglish.catalog,
   registerSessionPlacementEnglish.catalog,
   registerPluginConsentEnglish.catalog,
+  registerUpdateActionsEnglish.catalog,
 );
 
 export function controlUiLocaleModulesPlugin(): Plugin {

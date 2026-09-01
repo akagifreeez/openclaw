@@ -21,8 +21,6 @@ const UPDATE_HANDOFF_STARTED_REASON = "managed-service-handoff-started";
 function installUpdateTranslations() {
   const translations: Record<string, string> = {
     "updates.outcomeUnknown": UNKNOWN_OUTCOME_TEXT,
-    "updates.verificationFailedWithVersions":
-      "Update installed but running version did not change — restart may have been blocked. Expected v{expectedVersion}, running v{actualVersion}.",
     "updates.verificationFailedWithIdentity":
       "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}.",
     "common.unknown": "Unknown",
@@ -277,7 +275,7 @@ describe("application update reconciliation races", () => {
       expect(overlays.snapshot.updateReconciliationPending).toBe(false);
       expect(overlays.snapshot.updateStatusBanner).toEqual({
         tone: "danger",
-        text: expect.stringContaining("Expected v2.0.0"),
+        text: UNKNOWN_OUTCOME_TEXT,
       });
     } finally {
       overlays.dispose();

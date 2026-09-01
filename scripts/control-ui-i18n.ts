@@ -57,6 +57,7 @@ const SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en.ts");
 const ACTIVITY_SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en-activity.ts");
 const SESSION_PLACEMENT_SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en-session-placement.ts");
 const PLUGIN_CONSENT_SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en-plugin-consent.ts");
+const UPDATE_ACTIONS_SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en-update-actions.ts");
 const SOURCE_LOCALE = "en";
 const MAX_BATCH_ITEMS = 20;
 const DEFAULT_BATCH_CHAR_BUDGET = 2_000;
@@ -288,6 +289,7 @@ async function loadSourceLocaleMap(): Promise<TranslationMap> {
     ACTIVITY_SOURCE_LOCALE_PATH,
     SESSION_PLACEMENT_SOURCE_LOCALE_PATH,
     PLUGIN_CONSENT_SOURCE_LOCALE_PATH,
+    UPDATE_ACTIONS_SOURCE_LOCALE_PATH,
   );
 }
 
@@ -297,6 +299,7 @@ async function readSourceLocaleRaw(): Promise<string> {
     ACTIVITY_SOURCE_LOCALE_PATH,
     SESSION_PLACEMENT_SOURCE_LOCALE_PATH,
     PLUGIN_CONSENT_SOURCE_LOCALE_PATH,
+    UPDATE_ACTIONS_SOURCE_LOCALE_PATH,
   );
 }
 

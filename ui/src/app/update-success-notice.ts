@@ -5,6 +5,7 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { reloadControlUiIfStale } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
 import { showToast } from "../lib/toast.ts";
+import { generateUUID } from "../lib/uuid.ts";
 import { getSafeSessionStorage } from "../local-storage.ts";
 import {
   UPDATE_HANDOFF_TIMEOUT_MS,
@@ -12,6 +13,8 @@ import {
 } from "./update-overlay-helpers.ts";
 
 const UPDATE_NOTICE_KEY = "openclaw:control-ui:update:v1";
+const UPDATE_TRIAGE_RECEIPT_LIMIT = 32;
+const UPDATE_NOTICE_LENGTH_LIMIT = 4_096;
 
 type UpdateInstallIdentity = { version: string | null; sha: string | null };
 type UpdateNoticeScope = { gateway: string; profileId: string | null };
@@ -21,25 +24,19 @@ type VerifiedUpdateNotice = UpdateNoticeScope &
     deadlineAtMs: number;
   };
 type UpdateNotice = (UpdateNoticeScope & PendingUpdateReconciliation) | VerifiedUpdateNotice;
+type StoredUpdateNotice =
+  | (UpdateNoticeScope & Omit<PendingUpdateReconciliation, "requestId"> & { requestId?: string })
+  | VerifiedUpdateNotice;
 
-export function writeUpdateNotice(notice: UpdateNotice | null): void {
-  try {
-    const storage = getSafeSessionStorage();
-    if (notice === null) {
-      storage?.removeItem(UPDATE_NOTICE_KEY);
-    } else {
-      storage?.setItem(UPDATE_NOTICE_KEY, JSON.stringify(notice));
-    }
-  } catch {
-    // Denied storage must not prevent the current document reporting its result.
-  }
-}
-
-function isUpdateNotice(notice: unknown, gateway: string): notice is UpdateNotice {
+function isStoredUpdateNotice(notice: unknown, gateway: string): notice is StoredUpdateNotice {
   if (
     !isRecord(notice) ||
     notice.gateway !== gateway ||
-    (notice.profileId !== null && typeof notice.profileId !== "string") ||
+    (notice.profileId !== null && typeof notice.profileId !== "string")
+  ) {
+    return false;
+  }
+  if (
     (notice.kind !== "verified" &&
       notice.kind !== "ambiguous" &&
       notice.kind !== "handoff" &&
@@ -52,24 +49,14 @@ function isUpdateNotice(notice: unknown, gateway: string): notice is UpdateNotic
     return false;
   }
   return (
-    notice.kind === "verified"
+    (notice.kind === "verified"
       ? [notice.version, notice.sha]
       : [notice.expectedVersion, notice.expectedSha, notice.handoffId]
-  ).every((value) => value === null || typeof value === "string");
-}
-
-export function readUpdateNotice(gateway: string): UpdateNotice | null {
-  try {
-    const raw = getSafeSessionStorage()?.getItem(UPDATE_NOTICE_KEY);
-    const notice: unknown = raw && raw.length <= 4_096 ? JSON.parse(raw) : null;
-    if (isUpdateNotice(notice, gateway)) {
-      return notice;
-    }
-  } catch {
-    // Invalid or inaccessible transient notices cannot resume reconciliation.
-  }
-  writeUpdateNotice(null);
-  return null;
+    ).every((value) => value === null || typeof value === "string") &&
+    (notice.kind === "verified" ||
+      notice.requestId === undefined ||
+      typeof notice.requestId === "string")
+  );
 }
 
 function formatUpdateSuccess(identity: UpdateInstallIdentity): string {
@@ -83,36 +70,84 @@ function formatUpdateSuccess(identity: UpdateInstallIdentity): string {
   return version ? t("updates.succeededVersion", { version }) : t("updates.succeeded");
 }
 
-/** Records the outcome, then presents it here unless a reload will present it. */
-export function announceVerifiedUpdateInstall(
-  identity: UpdateInstallIdentity,
-  scope: UpdateNoticeScope,
-): void {
-  writeUpdateNotice({
-    ...identity,
-    ...scope,
-    kind: "verified",
-    deadlineAtMs: Date.now() + UPDATE_HANDOFF_TIMEOUT_MS,
-  });
-  if (!reloadControlUiIfStale(identity)) {
-    writeUpdateNotice(null);
-    showToast({ message: formatUpdateSuccess(identity) });
+export function createUpdateNoticeSession(gateway: string) {
+  let notice: UpdateNotice | null = null;
+  // Receipt identity includes both authority scopes. Keep no failure facts, and
+  // bound this tab's history without replaying simply because scope changed.
+  let triaged: string[] = [];
+  const receiptKey = (scope: UpdateNoticeScope, attemptId: string) =>
+    JSON.stringify([scope.gateway, scope.profileId, attemptId]);
+  const lengthLimit = UPDATE_NOTICE_LENGTH_LIMIT * (UPDATE_TRIAGE_RECEIPT_LIMIT + 1);
+  try {
+    const raw = getSafeSessionStorage()?.getItem(UPDATE_NOTICE_KEY);
+    const saved: unknown = raw && raw.length <= lengthLimit ? JSON.parse(raw) : null;
+    if (isRecord(saved)) {
+      const { triaged: savedReceipts, ...savedNotice } = saved;
+      if (isStoredUpdateNotice(savedNotice, gateway)) {
+        // The outgoing bundle's flat v1 pending notice predates requestId.
+        // Assign it once here, before persisting the same scoped handoff below.
+        notice =
+          savedNotice.kind === "verified"
+            ? savedNotice
+            : { ...savedNotice, requestId: savedNotice.requestId ?? generateUUID() };
+      }
+      if (Array.isArray(savedReceipts)) {
+        triaged = savedReceipts
+          .filter((key): key is string => typeof key === "string")
+          .slice(-UPDATE_TRIAGE_RECEIPT_LIMIT);
+      }
+    }
+  } catch {
+    // Invalid or inaccessible transient notices cannot resume reconciliation.
   }
-}
+  const write = (next: UpdateNotice | null) => {
+    notice = next;
+    try {
+      const storage = getSafeSessionStorage();
+      const raw = JSON.stringify({ ...notice, triaged });
+      if ((!notice && triaged.length === 0) || raw.length > lengthLimit) {
+        storage?.removeItem(UPDATE_NOTICE_KEY);
+      } else {
+        storage?.setItem(UPDATE_NOTICE_KEY, raw);
+      }
+    } catch {
+      // Denied storage must not prevent this document reporting its result.
+    }
+  };
+  write(notice);
 
-/** Presents a recorded install outcome once, then forgets it. */
-export function announceRecordedUpdateSuccess(scope: UpdateNoticeScope | null): void {
-  if (!scope) {
-    writeUpdateNotice(null);
-    return;
-  }
-  const notice = readUpdateNotice(scope.gateway);
-  if (notice?.kind !== "verified") {
-    return;
-  }
-  writeUpdateNotice(null);
-  if (notice.profileId !== scope.profileId) {
-    return;
-  }
-  showToast({ message: formatUpdateSuccess(notice) });
+  return {
+    get notice() {
+      return notice;
+    },
+    write,
+    hasTriaged: (scope: UpdateNoticeScope, attemptId: string) =>
+      triaged.includes(receiptKey(scope, attemptId)),
+    recordTriage(scope: UpdateNoticeScope, attemptId: string) {
+      triaged = [...triaged, receiptKey(scope, attemptId)].slice(-UPDATE_TRIAGE_RECEIPT_LIMIT);
+      write(notice);
+    },
+    announceVerifiedInstall(identity: UpdateInstallIdentity, scope: UpdateNoticeScope) {
+      write({
+        ...identity,
+        ...scope,
+        kind: "verified",
+        deadlineAtMs: Date.now() + UPDATE_HANDOFF_TIMEOUT_MS,
+      });
+      if (!reloadControlUiIfStale(identity)) {
+        write(null);
+        showToast({ message: formatUpdateSuccess(identity) });
+      }
+    },
+    announceRecordedSuccess(scope: UpdateNoticeScope) {
+      if (notice?.kind !== "verified") {
+        return;
+      }
+      const verified = notice;
+      write(null);
+      if (isStoredUpdateNotice(verified, scope.gateway) && verified.profileId === scope.profileId) {
+        showToast({ message: formatUpdateSuccess(verified) });
+      }
+    },
+  };
 }

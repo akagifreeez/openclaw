@@ -1,10 +1,13 @@
 import {
   readSystemAgentSessionInvalidatedErrorDetails,
+  readSystemAgentInferenceUnavailableErrorDetails,
   type SystemAgentChatParams,
 } from "@openclaw/gateway-protocol";
 import { inferBasePathFromPathname, routeIdFromPath } from "../../app-route-paths.ts";
+import type { CustodianConfiguredInferenceState } from "./custodian-session-variant.ts";
 
 export type CustodianSessionVariant = "onboarding" | "new-agent" | "caretaker";
+export type CustodianSetupIssue = "missing" | "unavailable";
 
 export function sessionVariant(
   onboarding: boolean,
@@ -34,8 +37,22 @@ export function hasCustodianUserInput(params: SystemAgentChatParams): boolean {
   );
 }
 
-export function isCustodianSessionInvalidatedError(error: unknown): boolean {
+export function custodianFailure(
+  error: unknown,
+  inference: CustodianConfiguredInferenceState,
+): {
+  setupIssue: CustodianSetupIssue | null;
+  sessionInvalidated: boolean;
+} {
   const details =
     error && typeof error === "object" ? (error as { details?: unknown }).details : undefined;
-  return readSystemAgentSessionInvalidatedErrorDetails(details) !== undefined;
+  return {
+    setupIssue:
+      readSystemAgentInferenceUnavailableErrorDetails(details) !== undefined
+        ? inference === "required"
+          ? "missing"
+          : "unavailable"
+        : null,
+    sessionInvalidated: readSystemAgentSessionInvalidatedErrorDetails(details) !== undefined,
+  };
 }

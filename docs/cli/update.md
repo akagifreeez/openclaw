@@ -39,6 +39,14 @@ openclaw --update
 `openclaw --update` rewrites to `openclaw update` (useful for shells and
 launcher scripts).
 
+Failed update and repair attempts enter [triage](/cli/triage) after service
+recovery and cleanup finish. Interactive updates open the existing agent picker;
+`--yes`, `--json`, and non-interactive invocations only collect diagnostics and
+print handoff commands. With `--json`, triage output goes to stderr so stdout
+retains the original update result. A failed diagnostic collection never hides
+the update failure. Dry runs do not collect diagnostics. See
+[Update troubleshooting](/install/update-troubleshooting).
+
 ## Options
 
 | Flag                                             | Description                                                                                                                                                                                                                                                                                                                                   |

@@ -91,10 +91,13 @@ class CustodianSurface extends OpenClawLightDomElement {
     if (
       store.chatAvailable &&
       !store.sending &&
+      !store.sensitive &&
       !store.hasUnresolvedQuestion() &&
       !store.setupRequired
     ) {
-      custodianAlertStore.askIfReady((question) => void store.send(question));
+      custodianAlertStore.askIfReady(
+        (question, admission, display) => void store.send(question, display, false, admission),
+      );
     }
     const transcript = this.querySelector<HTMLElement>(".custodian__messages");
     if (transcript) {

@@ -86,7 +86,7 @@ describe("application update attempt continuity", () => {
       expect(overlays.snapshot.updateReconciliationPending).toBe(false);
       expect(overlays.snapshot.updateRunning).toBe(false);
       expect(overlays.snapshot.updateStatusBanner).toMatchObject({ tone: "danger" });
-      expect(overlays.snapshot.updateStatusBanner?.text).toContain("openclaw update status");
+      expect(overlays.snapshot.updateStatusBanner?.text).toContain("openclaw triage");
       expect(showToast).not.toHaveBeenCalled();
     } finally {
       overlays.dispose();

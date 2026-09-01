@@ -25,7 +25,9 @@ import {
   readUpdateScheduleValue,
 } from "./update-schedule-dto.ts";
 
+const TRIAGE_HINT = "Run openclaw triage on the Gateway host before retrying.";
 const translations: Record<string, string> = {
+  "updates.triage.hostHint": TRIAGE_HINT,
   "updates.status": "Update {status}: {reason}. {guidance}",
   "updates.failureReasons.dirty": "Commit or stash changes, then retry.",
   "updates.failureReasons.depsInstallFailed":
@@ -34,10 +36,6 @@ const translations: Record<string, string> = {
     "Stop the foreground Gateway, update in the terminal, then launch it again.",
   "updates.failureReasons.default":
     "See the gateway logs for the exact failure and retry once the cause is fixed.",
-  "updates.verificationFailed":
-    "Update installed but running version did not change — restart may have been blocked.",
-  "updates.verificationFailedWithVersions":
-    "Update installed but running version did not change — restart may have been blocked. Expected v{expectedVersion}, running v{actualVersion}.",
   "updates.verificationFailedWithIdentity":
     "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}.",
   "updates.outcomeUnknown": "The update outcome is unknown.",
@@ -66,9 +64,8 @@ afterEach(() => {
 });
 
 async function verifyUpdate(params: {
-  pending: Omit<PendingUpdateReconciliation, "handoffId" | "deadlineAtMs">;
+  pending: Omit<PendingUpdateReconciliation, "requestId" | "handoffId" | "deadlineAtMs">;
   response: unknown;
-  hello?: GatewayHelloOk | null;
   advanceToMs?: number;
   onVerifiedInstall?: (identity: { version: string | null; sha: string | null }) => void;
 }): Promise<ApplicationStatusBanner | null | undefined> {
@@ -77,6 +74,7 @@ async function verifyUpdate(params: {
   let banner: ApplicationStatusBanner | null | undefined;
   const pending: PendingUpdateReconciliation = {
     ...params.pending,
+    requestId: "request-current",
     handoffId: null,
     deadlineAtMs: 35 * 60_000,
   };
@@ -92,12 +90,11 @@ async function verifyUpdate(params: {
     getPending: () => pending,
     clearPending: vi.fn(),
     isCurrent: () => true,
-    getHello: () => params.hello ?? null,
     publish: vi.fn(),
     publishBanner: (value) => {
       banner = value;
     },
-    publishRecordedFailure: ({ banner: value }) => {
+    publishFailure: ({ banner: value }) => {
       banner = value;
     },
     ...(params.onVerifiedInstall ? { onVerifiedInstall: params.onVerifiedInstall } : {}),
@@ -525,7 +522,7 @@ describe("update status localization", () => {
       }),
     ).resolves.toEqual({
       tone: "danger",
-      text: "The update failed at install: ENOSPC: no space left on device, write. Dependency install failed. Fix the install error and retry.",
+      text: `The update failed at install: ENOSPC: no space left on device, write. Dependency install failed. Fix the install error and retry. ${TRIAGE_HINT}`,
     });
   });
 
@@ -565,7 +562,7 @@ describe("update status localization", () => {
       }),
     ).resolves.toEqual({
       tone: "danger",
-      text: "Update finished, but the running install does not match the expected revision. Expected v2.0.0, running Unknown.",
+      text: "The update outcome is unknown.",
     });
   });
 
@@ -629,7 +626,7 @@ describe("update status localization", () => {
       }),
     ).resolves.toEqual({
       tone: "danger",
-      text: "Update error: restart-unhealthy. The replacement process never became healthy. The previous process stayed up so you can recover.",
+      text: `Update error: restart-unhealthy. The replacement process never became healthy. The previous process stayed up so you can recover. ${TRIAGE_HINT}`,
     });
     await expect(
       verifyUpdate({
@@ -644,7 +641,7 @@ describe("update status localization", () => {
       }),
     ).resolves.toEqual({
       tone: "danger",
-      text: "Update error: supervisor-exited. See the gateway logs for the exact failure and retry once the cause is fixed.",
+      text: `Update error: supervisor-exited. See the gateway logs for the exact failure and retry once the cause is fixed. ${TRIAGE_HINT}`,
     });
     await expect(
       verifyUpdate({

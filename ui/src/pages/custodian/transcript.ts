@@ -51,9 +51,12 @@ export function hasUnresolvedCustodianQuestion(
   return (
     wizardInputPending ||
     replyUncertain ||
+    // buildSystemAgentGreetingQuestion emits suggestions, not pending input.
+    // Like free text, diagnostics and nudges may replace those quick actions.
     messages.some(
       (message) =>
         message.question !== null &&
+        message.question.id !== "system-agent-quick-actions" &&
         !dismissedQuestions.has(`${message.id}:${message.question.id}`) &&
         !answeredQuestions.has(`${message.id}:${message.question.id}`),
     )

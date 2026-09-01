@@ -6,9 +6,25 @@ read_when:
 title: "Update troubleshooting"
 ---
 
-Start in **Control UI → Settings → Updates**. The page reads the latest recorded
-update attempt from the connected Gateway and shows its time, target, reason
-code, failing step, and bounded diagnostic detail.
+Failed updates enter built-in triage after update recovery settles. In an
+interactive terminal, OpenClaw collects sanitized diagnostics and opens the
+[triage agent picker](/cli/triage). With `--yes`, `--json`, or no interactive
+terminal, it prepares diagnostics and handoff commands without launching an
+agent. The original update failure and exit status remain authoritative;
+diagnostics do not turn a failed update into a successful one.
+
+In the Control UI, a failed attempt opens **Ask OpenClaw** with its recorded
+details and asks it to investigate before retrying. A lost connection or
+verification timeout is presented as an unknown outcome. The tab remembers the
+latest 32 investigated attempt identities, scoped to their Gateway and profile.
+Status checks, switching between those scopes, and reloading the same tab do not
+automatically send those investigations again. If the Gateway or agent is
+unavailable, use `openclaw triage` on the Gateway host.
+
+**Control UI → Settings → Updates** keeps the latest recorded attempt visible,
+including its time, before/after identities, reason code, failing step, and
+bounded diagnostic detail. Intentional cancellations, already-current installs,
+and updates still in progress do not start triage.
 
 Control UI remediation uses typed product actions only. It leads with an
 authenticated Gateway or native action when the connected UI has the required
@@ -65,13 +81,18 @@ Control UI open:
 
 ```bash
 openclaw update status --json
-openclaw doctor --non-interactive
-openclaw update
+openclaw triage
 ```
 
 Use `openclaw update --dry-run` to preview a new attempt. If a package update
 failed after installation began, follow the installer recovery steps in
 [Updating](/install/updating#alternative-re-run-the-installer).
+
+If the installed CLI is damaged or the filesystem cannot write diagnostics,
+automatic triage reports that failure and preserves the original update error.
+Repair the installed command, then run `openclaw triage`. Managed updates retain
+their detached helper log even when the Gateway cannot start; the recorded
+outcome points to the available diagnostics or the failed collection attempt.
 
 If the updater crashes or is killed after the Gateway stops, the Gateway stays
 stopped unless the updater completed and verified recovery. Inspect

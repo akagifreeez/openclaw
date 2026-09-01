@@ -227,6 +227,7 @@ type WindowsTaskAutoStartRecovery = {
 
 export type UpdateCommandRecoveryState = {
   windowsTaskAutoStartRecovery?: WindowsTaskAutoStartRecovery;
+  triageTarget: import("./update-command-triage.js").UpdateTriageTarget;
 };
 
 export class UpdateCommandAbort extends Error {

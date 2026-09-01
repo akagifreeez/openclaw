@@ -4,6 +4,7 @@ import type { UpdateHoldResult } from "../api/types.ts";
 import { controlUiBuildDiffersFrom } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
 import { formatUiError } from "../lib/format-error.ts";
+import { generateUUID } from "../lib/uuid.ts";
 import type { ApplicationGateway } from "./gateway.ts";
 import { readGatewayOperatorAccess } from "./operator-access.ts";
 import type { ApplicationUpdateOverlaySnapshot } from "./overlays-types.ts";
@@ -12,6 +13,7 @@ import {
   createUpdateCampaignStatusPoller,
   createUpdateStatusRefresher,
   createUpdateVerificationController,
+  projectUpdateSentinel,
   projectUpdateStatusResponse,
   resolveExpectedUpdateSha,
   resolveUnknownUpdateOutcomeBanner,
@@ -21,6 +23,8 @@ import {
   type PendingUpdateReconciliation,
   type UpdateRestartStatusResponse,
   type UpdateRunResponse,
+  type UpdateFailureTriage,
+  type UpdateTriageAdmission,
 } from "./update-overlay-helpers.ts";
 import { readUpdateScheduleValue } from "./update-schedule-dto.ts";
 import {
@@ -28,17 +32,13 @@ import {
   projectUpdateAvailableEvent,
   resolveHeldUpdateCampaignId,
 } from "./update-schedule-projection.ts";
-import {
-  announceRecordedUpdateSuccess,
-  announceVerifiedUpdateInstall,
-  readUpdateNotice,
-  writeUpdateNotice,
-} from "./update-success-notice.ts";
+import { createUpdateNoticeSession } from "./update-success-notice.ts";
 
 export type ApplicationUpdateOverlayHooks = {
   /** Barrier awaited after update-running is published and before update.run
    * is issued, so in-flight config writes cannot overlap the install. */
   drainConfigWrites?: () => Promise<void>;
+  onUpdateFailure?: (failure: UpdateFailureTriage, admission: UpdateTriageAdmission) => void;
 };
 
 export function createApplicationUpdateOverlays(
@@ -65,7 +65,8 @@ export function createApplicationUpdateOverlays(
   let connectedEpoch = 0;
   let operatorAccess = readGatewayOperatorAccess(gateway.snapshot);
   let updateGatewayScope = gatewayCredentialScope(gateway.connection.gatewayUrl);
-  const savedUpdate = readUpdateNotice(updateGatewayScope);
+  const updateNotices = createUpdateNoticeSession(updateGatewayScope);
+  const savedUpdate = updateNotices.notice;
   let pendingUpdate: PendingUpdateReconciliation | null =
     savedUpdate && savedUpdate.kind !== "verified" ? savedUpdate : null;
   let pendingUpdateProfileId = savedUpdate?.profileId ?? null;
@@ -74,6 +75,7 @@ export function createApplicationUpdateOverlays(
   let updateStatusRevision = 0;
   let updateRunGeneration = 0;
   let updateHoldInFlight = false;
+  let currentFailure: { failure: UpdateFailureTriage; profileId: string | null } | null = null;
 
   function publish() {
     snapshot = {
@@ -106,6 +108,60 @@ export function createApplicationUpdateOverlays(
     gateway: updateGatewayScope,
     profileId: gateway.snapshot.selfUser?.id ?? null,
   });
+  const presentFailureTriage = () => {
+    const owned = currentFailure;
+    if (!owned) {
+      return;
+    }
+    const scope = noticeScope();
+    const alreadyTriaged = () => updateNotices.hasTriaged(scope, owned.failure.id);
+    const isCurrent = () =>
+      !disposed &&
+      currentFailure === owned &&
+      gatewayCredentialScope(gateway.connection.gatewayUrl) === scope.gateway &&
+      (gateway.snapshot.selfUser?.id ?? null) === owned.profileId &&
+      readGatewayOperatorAccess(gateway.snapshot).canAdmin;
+    if (!isCurrent() || alreadyTriaged()) {
+      return;
+    }
+    hooks.onUpdateFailure?.(owned.failure, {
+      isCurrent,
+      admit: () => {
+        if (
+          !isCurrent() ||
+          alreadyTriaged() ||
+          gateway.snapshot.phase !== "connected" ||
+          snapshot.updateRunning ||
+          pendingUpdate
+        ) {
+          return false;
+        }
+        // Claim before the ordinary agent send. A reply can be lost during a
+        // reload; that must not replay the same diagnostic turn automatically.
+        updateNotices.recordTriage(scope, owned.failure.id);
+        return true;
+      },
+    });
+  };
+  const prepareFailureTriage = (failure: UpdateFailureTriage) => {
+    if (currentFailure?.failure.id === failure.id) {
+      return false;
+    }
+    currentFailure = { failure, profileId: noticeScope().profileId };
+    return true;
+  };
+  const publishUpdateFailure = (failure: UpdateFailureTriage) => {
+    const prepared = prepareFailureTriage(failure);
+    snapshot = {
+      ...snapshot,
+      recordedUpdateAttempt: failure.attempt,
+      updateStatusBanner: failure.banner,
+    };
+    publish();
+    if (prepared) {
+      presentFailureTriage();
+    }
+  };
   const clearPendingUpdateTimer = () => {
     if (pendingUpdateTimer !== null) {
       globalThis.clearTimeout(pendingUpdateTimer);
@@ -115,7 +171,7 @@ export function createApplicationUpdateOverlays(
   const setPendingUpdate = (pending: PendingUpdateReconciliation | null) => {
     pendingUpdate = pending;
     clearPendingUpdateTimer();
-    writeUpdateNotice(
+    updateNotices.write(
       pending
         ? { ...pending, gateway: updateGatewayScope, profileId: pendingUpdateProfileId }
         : null,
@@ -132,7 +188,12 @@ export function createApplicationUpdateOverlays(
           updateVerification.cancel();
           updateRequestRunning = false;
           setPendingUpdate(null);
-          publishUpdateBanner(resolveUnknownUpdateOutcomeBanner());
+          publishUpdateFailure({
+            id: pending.handoffId ?? pending.requestId,
+            outcome: "unknown",
+            attempt: null,
+            banner: resolveUnknownUpdateOutcomeBanner(),
+          });
         },
         Math.max(0, pending.deadlineAtMs - Date.now()),
       );
@@ -144,17 +205,11 @@ export function createApplicationUpdateOverlays(
       setPendingUpdate(null);
     },
     isCurrent: (client, epoch) => epoch === connectedEpoch && isCurrentClient(client),
-    getHello: () => gateway.snapshot.hello,
     publish,
     publishBanner: publishUpdateBanner,
     publishRecordedAttempt: publishRecordedUpdateAttempt,
-    publishRecordedFailure: ({ attempt, banner }) => {
-      // Both facts terminate the same reconciliation. Publishing either first
-      // exposes a false success or a failure without its recorded cause.
-      snapshot = { ...snapshot, recordedUpdateAttempt: attempt, updateStatusBanner: banner };
-      publish();
-    },
-    onVerifiedInstall: (identity) => announceVerifiedUpdateInstall(identity, noticeScope()),
+    publishFailure: publishUpdateFailure,
+    onVerifiedInstall: (identity) => updateNotices.announceVerifiedInstall(identity, noticeScope()),
   });
   const applyUpdateStatusResponse = (response: UpdateRestartStatusResponse) => {
     // The admitted attempt has its own identity-aware verifier. A page refresh
@@ -162,16 +217,20 @@ export function createApplicationUpdateOverlays(
     if (pendingUpdate) {
       return;
     }
+    const { failure, ...status } = projectUpdateStatusResponse(response, snapshot);
+    const prepared = failure ? prepareFailureTriage(failure) : false;
+    if (!failure && response.sentinel?.kind === "update") {
+      currentFailure = null;
+    }
     snapshot = {
       ...snapshot,
-      ...projectUpdateStatusResponse(response, {
-        updateStatusBanner: snapshot.updateStatusBanner,
-        recordedUpdateAttempt: snapshot.recordedUpdateAttempt,
-        heldUpdateCampaignId: snapshot.heldUpdateCampaignId,
-      }),
+      ...status,
       updateCampaignStatusHydrated: true,
     };
     publish();
+    if (prepared) {
+      presentFailureTriage();
+    }
   };
   const refreshUpdateStatus = createUpdateStatusRefresher({
     getClient: () => activeClient,
@@ -206,6 +265,7 @@ export function createApplicationUpdateOverlays(
       updateVerification.cancel();
       setPendingUpdate(null);
       updateRequestRunning = false;
+      currentFailure = null;
       updateGatewayScope = nextGatewayScope;
       snapshot = {
         ...snapshot,
@@ -226,6 +286,9 @@ export function createApplicationUpdateOverlays(
       const updateStatusBanner = pendingUpdate ? resolveUnknownUpdateOutcomeBanner() : null;
       setPendingUpdate(null);
       updateRequestRunning = false;
+      currentFailure = null;
+      // Retire privileged facts, but retain the scoped consumed identity so
+      // restoring access cannot replay the same diagnostic turn.
       snapshot = {
         ...snapshot,
         updateStatusRefreshing: false,
@@ -237,6 +300,9 @@ export function createApplicationUpdateOverlays(
     activeClient = next.client;
     activeHello = next.hello;
     connectedSource = nextConnectedSource;
+    if (currentFailure && currentFailure.profileId !== (next.selfUser?.id ?? null)) {
+      currentFailure = null;
+    }
     if (connectedSourceChanged) {
       updateRunGeneration += 1;
       updateStatusRevision += 1;
@@ -293,7 +359,10 @@ export function createApplicationUpdateOverlays(
     updateCampaignPoller.sync();
     if (connectedSourceChanged) {
       connectedEpoch += 1;
-      announceRecordedUpdateSuccess(operatorAccess.canAdmin ? noticeScope() : null);
+      if (operatorAccess.canAdmin) {
+        updateNotices.announceRecordedSuccess(noticeScope());
+      }
+      presentFailureTriage();
       if (pendingUpdate && operatorAccess.canAdmin) {
         void updateVerification.verify(next.client, connectedEpoch);
       } else if (operatorAccess.canAdmin && !snapshot.updateSchedule?.campaign) {
@@ -325,6 +394,9 @@ export function createApplicationUpdateOverlays(
         ...snapshot,
         ...projectUpdateAvailableEvent(snapshot, payload),
       };
+      if (snapshot.updateSchedule?.campaign?.state === "applying") {
+        currentFailure = null;
+      }
       publish();
       updateCampaignPoller.sync();
       if (
@@ -358,12 +430,14 @@ export function createApplicationUpdateOverlays(
       const generation = ++updateRunGeneration;
       updateStatusRevision += 1;
       updateRequestRunning = true;
+      currentFailure = null;
       snapshot = {
         ...snapshot,
         updateStatusBanner: null,
         recordedUpdateAttempt: null,
       };
       publish();
+      const requestId = generateUUID();
       let admittedPending: PendingUpdateReconciliation | null = null;
       try {
         // updateRunning above suspends NEW config writes (bootstrap syncs it
@@ -380,6 +454,7 @@ export function createApplicationUpdateOverlays(
         }
         pendingUpdateProfileId = gateway.snapshot.selfUser?.id ?? null;
         admittedPending = {
+          requestId,
           kind: "ambiguous",
           expectedVersion: snapshot.updateAvailable?.latestVersion?.trim() || null,
           expectedSha: resolveExpectedUpdateSha(snapshot.updateSchedule, snapshot.updateAvailable),
@@ -407,13 +482,27 @@ export function createApplicationUpdateOverlays(
           return;
         }
         setPendingUpdate(null);
-        snapshot = {
-          ...snapshot,
-          updateStatusBanner: resolveUpdateStatusBanner({
+        const result = projectUpdateSentinel(
+          response.sentinel?.payload ?? {
+            kind: "update",
             status: response.result?.status ?? "error",
-            reason: response.result?.reason,
-          }),
-        };
+            stats: { reason: response.result?.reason },
+          },
+          requestId,
+        );
+        if (result?.failure) {
+          publishUpdateFailure(result.failure);
+        } else {
+          snapshot = {
+            ...snapshot,
+            updateStatusBanner:
+              result?.banner ??
+              resolveUpdateStatusBanner({
+                status: response.result?.status ?? "error",
+                reason: response.result?.reason,
+              }),
+          };
+        }
       } catch (error) {
         if (
           disposed ||
@@ -425,15 +514,15 @@ export function createApplicationUpdateOverlays(
           return;
         }
         setPendingUpdate(null);
-        snapshot = {
-          ...snapshot,
-          updateStatusBanner: {
+        publishUpdateFailure({
+          id: requestId,
+          outcome: "unknown",
+          attempt: null,
+          banner: {
             tone: "danger",
-            text: t("updates.error", {
-              error: formatUiError(error),
-            }),
+            text: `${t("updates.error", { error: formatUiError(error) })} ${resolveUnknownUpdateOutcomeBanner().text}`,
           },
-        };
+        });
       } finally {
         if (
           !disposed &&

@@ -1,4 +1,5 @@
-import type { GatewayBrowserClient, GatewayHelloOk } from "../api/gateway.ts";
+import { classifyUpdateOutcome } from "../../../src/shared/update-outcome.js";
+import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { UpdateAvailable, UpdateScheduleState } from "../api/types.ts";
 import { t } from "../i18n/index.ts";
 import { formatUiExternalText } from "../lib/format-error.ts";
@@ -21,6 +22,18 @@ export type RecordedUpdateAttempt = {
   afterVersion: string | null;
   afterSha: string | null;
   failure: UpdateFailureCause | null;
+};
+
+export type UpdateFailureTriage = {
+  id: string;
+  outcome: "failed" | "unknown";
+  attempt: RecordedUpdateAttempt | null;
+  banner: ApplicationStatusBanner;
+};
+
+export type UpdateTriageAdmission = {
+  isCurrent: () => boolean;
+  admit: () => boolean;
 };
 
 /**
@@ -68,17 +81,12 @@ export function createUpdateProgressWatcher(
 }
 
 const UPDATE_HANDOFF_STARTED_REASON = "managed-service-handoff-started";
-const UPDATE_RESTART_HEALTH_PENDING_REASON = "restart-health-pending";
 const UPDATE_RESTART_VERIFICATION_POLL_MS = 250;
 const UPDATE_RESTART_VERIFICATION_TIMEOUT_MS = 10_000;
 const UPDATE_HANDOFF_POLL_MS = 1_000;
 // Manual update.run uses a 30-minute command budget plus restart grace.
 // Automatic campaigns own their separate server-side deadline.
 export const UPDATE_HANDOFF_TIMEOUT_MS = 35 * 60_000;
-const PENDING_UPDATE_HANDOFF_REASONS = new Set([
-  UPDATE_HANDOFF_STARTED_REASON,
-  UPDATE_RESTART_HEALTH_PENDING_REASON,
-]);
 const UPDATE_FAILURE_REASON_KEYS: Record<string, string> = {
   dirty: "updates.failureReasons.dirty",
   "no-upstream": "updates.failureReasons.noUpstream",
@@ -139,29 +147,62 @@ export type UpdateRestartStatusResponse = {
 
 type UpdateFailureCause = { step: string; detail: string };
 
-function readRecordedUpdateAttempt(
+/** One projection owns the recorded display facts and the typed triage transition. */
+export function projectUpdateSentinel(
   sentinel: UpdateRestartStatusResponse["sentinel"],
-): RecordedUpdateAttempt | null {
-  if (
-    sentinel?.kind !== "update" ||
-    !sentinel.status ||
-    sentinel.status === "ok" ||
-    isPendingUpdateHandoffSentinel(sentinel) ||
-    typeof sentinel.ts !== "number"
-  ) {
+  requestId?: string,
+): {
+  outcome: ReturnType<typeof classifyUpdateOutcome>;
+  attempt: RecordedUpdateAttempt | null;
+  banner: ApplicationStatusBanner | null;
+  failure: UpdateFailureTriage | null;
+} | null {
+  if (sentinel?.kind !== "update" || !sentinel.status) {
     return null;
   }
   const stats = sentinel.stats;
-  return {
-    timestampMs: sentinel.ts,
+  const outcome = classifyUpdateOutcome({
     status: sentinel.status,
-    reason: stats?.reason?.trim() || "unexpected-error",
-    installKind: stats?.mode?.trim() || null,
-    beforeVersion: stats?.before?.version?.trim() || null,
-    beforeSha: stats?.before?.sha?.trim() || null,
-    afterVersion: stats?.after?.version?.trim() || null,
-    afterSha: stats?.after?.sha?.trim() || null,
-    failure: readUpdateFailureCause(sentinel),
+    reason: stats?.reason ?? undefined,
+  });
+  const showResult = outcome !== "succeeded" && outcome !== "pending";
+  const cause = showResult ? readUpdateFailureCause(sentinel) : null;
+  const attempt =
+    showResult && typeof sentinel.ts === "number"
+      ? {
+          timestampMs: sentinel.ts,
+          status: sentinel.status,
+          reason: stats?.reason?.trim() || "unexpected-error",
+          installKind: stats?.mode?.trim() || null,
+          beforeVersion: stats?.before?.version?.trim() || null,
+          beforeSha: stats?.before?.sha?.trim() || null,
+          afterVersion: stats?.after?.version?.trim() || null,
+          afterSha: stats?.after?.sha?.trim() || null,
+          failure: cause,
+        }
+      : null;
+  const banner = showResult
+    ? resolveUpdateStatusBanner({
+        status: sentinel.status,
+        reason: stats?.reason ?? undefined,
+        cause,
+      })
+    : null;
+  if (banner && outcome === "failed") {
+    banner.text += ` ${t("updates.triage.hostHint")}`;
+  }
+  const handoffId = stats?.handoffId?.trim();
+  const id =
+    handoffId && handoffId.length <= 256
+      ? handoffId
+      : attempt
+        ? `recorded:${attempt.timestampMs}:${attempt.status}`
+        : requestId;
+  return {
+    outcome,
+    attempt,
+    banner,
+    failure: outcome === "failed" && id && banner ? { id, outcome, attempt, banner } : null,
   };
 }
 
@@ -202,7 +243,7 @@ export type UpdateRunResponse = {
   };
   handoff?: { status?: string };
   restart?: { coalesced?: boolean } | null;
-  sentinel?: { payload?: { stats?: { handoffId?: string | null } | null } | null } | null;
+  sentinel?: { payload?: UpdateRestartStatusResponse["sentinel"] } | null;
 };
 
 async function requestUpdateRestartStatus(
@@ -323,6 +364,7 @@ export function resolveExpectedUpdateSha(
 }
 
 export type PendingUpdateReconciliation = {
+  requestId: string;
   expectedVersion: string | null;
   expectedSha: string | null;
   // A lost response (or an unmanaged restart) has no handoff id. That path
@@ -351,14 +393,10 @@ export function createUpdateVerificationController(params: {
   getPending: () => PendingUpdateReconciliation | null;
   clearPending: () => void;
   isCurrent: (client: GatewayBrowserClient, epoch: number) => boolean;
-  getHello: () => GatewayHelloOk | null;
   publish: () => void;
   publishBanner: (banner: ApplicationStatusBanner | null) => void;
   publishRecordedAttempt?: (attempt: RecordedUpdateAttempt | null) => void;
-  publishRecordedFailure: (params: {
-    attempt: RecordedUpdateAttempt | null;
-    banner: ApplicationStatusBanner;
-  }) => void;
+  publishFailure: (failure: UpdateFailureTriage) => void;
   onVerifiedInstall?: (identity: { version: string | null; sha: string | null }) => void;
 }) {
   let generation = 0;
@@ -416,7 +454,9 @@ export function createUpdateVerificationController(params: {
         reconciliation.handoffId && candidate?.stats?.handoffId !== reconciliation.handoffId
           ? null
           : candidate;
-      if (isPendingUpdateHandoffSentinel(sentinel)) {
+      const result = projectUpdateSentinel(sentinel, reconciliation.requestId);
+      const outcome = result?.outcome;
+      if (outcome === "pending") {
         if (reconciliation.kind !== "handoff") {
           // Confirmed updates can become managed handoffs; preserve the longer lifecycle budget.
           reconciliation.kind = "handoff";
@@ -433,16 +473,14 @@ export function createUpdateVerificationController(params: {
         }
         continue;
       }
-      if (sentinel?.kind === "update" && sentinel.status && sentinel.status !== "ok") {
+      if (result?.failure) {
         params.clearPending();
-        params.publishRecordedFailure({
-          attempt: readRecordedUpdateAttempt(sentinel),
-          banner: resolveUpdateStatusBanner({
-            status: "error",
-            ...(sentinel.stats?.reason ? { reason: sentinel.stats.reason } : {}),
-            cause: readUpdateFailureCause(sentinel),
-          }),
-        });
+        params.publishFailure(result.failure);
+        return;
+      }
+      if (outcome === "noop") {
+        params.clearPending();
+        params.publishBanner(null);
         return;
       }
       const actualVersion = sentinel?.stats?.after?.version?.trim() || null;
@@ -466,14 +504,17 @@ export function createUpdateVerificationController(params: {
           expectedSha !== null && actualSha !== null && !commitsMatch(expectedSha, actualSha);
         if (versionMismatch || shaMismatch) {
           params.clearPending();
-          params.publishBanner(
-            resolveUpdateVerificationBanner({
+          params.publishFailure({
+            id: reconciliation.handoffId ?? reconciliation.requestId,
+            outcome: "failed",
+            attempt: null,
+            banner: resolveUpdateVerificationBanner({
               expectedVersion,
               actualVersion,
               expectedSha,
               actualSha,
             }),
-          );
+          });
           return;
         }
       }
@@ -488,20 +529,16 @@ export function createUpdateVerificationController(params: {
     if (!isCurrent()) {
       return;
     }
-    const currentVersion = params.getHello()?.server?.version?.trim() || null;
     params.clearPending();
-    params.publishBanner(
-      expectedSha || (expectedVersion && currentVersion !== expectedVersion)
-        ? resolveUpdateVerificationBanner({
-            expectedVersion,
-            actualVersion: currentVersion,
-            expectedSha,
-            actualSha: null,
-          })
-        : reconciliation.kind === "handoff"
+    params.publishFailure({
+      id: reconciliation.handoffId ?? reconciliation.requestId,
+      outcome: "unknown",
+      attempt: null,
+      banner:
+        reconciliation.kind === "handoff"
           ? resolvePendingUpdateHandoffTimeoutBanner()
           : resolveUnknownUpdateOutcomeBanner(),
-    );
+    });
   };
   return { cancel, verify };
 }
@@ -561,31 +598,21 @@ export function projectUpdateStatusResponse(
     heldUpdateCampaignId: string | null;
   },
 ): {
+  failure: UpdateFailureTriage | null;
   updateStatusBanner: ApplicationStatusBanner | null;
   recordedUpdateAttempt: RecordedUpdateAttempt | null;
   updateAvailable?: UpdateAvailable | null;
   updateSchedule?: UpdateScheduleState | null;
   heldUpdateCampaignId?: string | null;
 } {
-  const sentinel = response.sentinel;
+  const result = projectUpdateSentinel(response.sentinel);
   const updateSchedule = Object.hasOwn(response, "schedule")
     ? readUpdateScheduleValue(response.schedule)
     : undefined;
   return {
-    updateStatusBanner:
-      sentinel?.kind === "update" && sentinel.status
-        ? sentinel.status === "ok" || isPendingUpdateHandoffSentinel(sentinel)
-          ? null
-          : resolveUpdateStatusBanner({
-              status: sentinel.status,
-              reason: sentinel.stats?.reason ?? undefined,
-              cause: readUpdateFailureCause(sentinel),
-            })
-        : current.updateStatusBanner,
-    recordedUpdateAttempt:
-      sentinel?.kind === "update" && sentinel.status
-        ? readRecordedUpdateAttempt(sentinel)
-        : current.recordedUpdateAttempt,
+    failure: updateSchedule?.campaign?.state === "applying" ? null : (result?.failure ?? null),
+    updateStatusBanner: result ? result.banner : current.updateStatusBanner,
+    recordedUpdateAttempt: result ? result.attempt : current.recordedUpdateAttempt,
     ...(Object.hasOwn(response, "updateAvailable")
       ? { updateAvailable: readUpdateAvailableValue(response.updateAvailable) }
       : {}),
@@ -711,16 +738,4 @@ export function resolveUnknownUpdateOutcomeBanner(): ApplicationStatusBanner {
     tone: "danger",
     text: t("updates.outcomeUnknown"),
   };
-}
-
-function isPendingUpdateHandoffSentinel(
-  sentinel: UpdateRestartStatusResponse["sentinel"],
-): boolean {
-  const reason = sentinel?.stats?.reason;
-  return (
-    sentinel?.kind === "update" &&
-    sentinel.status === "skipped" &&
-    typeof reason === "string" &&
-    PENDING_UPDATE_HANDOFF_REASONS.has(reason)
-  );
 }

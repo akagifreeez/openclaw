@@ -23,7 +23,10 @@ import {
   renderSettingsValue,
 } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
+import { registerUpdateActionsEnglish } from "../../i18n/locales/en-update-actions.ts";
 import { formatDateTimeMs, formatTimeAgo } from "../../lib/format.ts";
+
+registerUpdateActionsEnglish();
 
 type UpdatesChannel = "stable" | "beta" | "dev" | "extended-stable";
 
@@ -139,7 +142,8 @@ function renderRecordedAttempt(props: UpdatesViewProps) {
       stacked: true,
       control: html`<details class="updates-attempt-details">
         <summary>${t("updates.page.showCliFallback")}</summary>
-        <pre><code>openclaw update status --json
+        <pre><code>openclaw triage
+openclaw update status --json
 openclaw update</code></pre>
       </details>`,
     }),

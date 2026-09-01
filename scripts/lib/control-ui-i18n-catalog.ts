@@ -25,6 +25,7 @@ export async function loadControlUiSourceCatalog(
   activitySourceLocalePath: string,
   sessionPlacementSourceLocalePath: string,
   pluginConsentSourceLocalePath: string,
+  updateActionsSourceLocalePath: string,
 ): Promise<TranslationMap> {
   const source = await loadControlUiLocaleCatalog(sourceLocalePath, "en");
   const activitySource = (
@@ -42,7 +43,18 @@ export async function loadControlUiSourceCatalog(
       registerPluginConsentEnglish: { catalog: TranslationMap };
     }>(pluginConsentSourceLocalePath)
   ).registerPluginConsentEnglish.catalog;
-  if (!source || !activitySource || !sessionPlacementSource || !pluginConsentSource) {
+  const updateActionsSource = (
+    await importControlUiLocaleModule<{
+      registerUpdateActionsEnglish: { catalog: TranslationMap };
+    }>(updateActionsSourceLocalePath)
+  ).registerUpdateActionsEnglish.catalog;
+  if (
+    !source ||
+    !activitySource ||
+    !sessionPlacementSource ||
+    !pluginConsentSource ||
+    !updateActionsSource
+  ) {
     throw new Error("Control UI English source catalogs are incomplete");
   }
   return mergeControlUiTranslationMaps(
@@ -50,6 +62,7 @@ export async function loadControlUiSourceCatalog(
     activitySource,
     sessionPlacementSource,
     pluginConsentSource,
+    updateActionsSource,
   );
 }
 
@@ -58,6 +71,7 @@ export async function readControlUiSourceCatalog(
   activitySourceLocalePath: string,
   sessionPlacementSourceLocalePath: string,
   pluginConsentSourceLocalePath: string,
+  updateActionsSourceLocalePath: string,
 ): Promise<string> {
   const sources = await Promise.all(
     [
@@ -65,6 +79,7 @@ export async function readControlUiSourceCatalog(
       activitySourceLocalePath,
       sessionPlacementSourceLocalePath,
       pluginConsentSourceLocalePath,
+      updateActionsSourceLocalePath,
     ].map((filePath) => readFile(filePath, "utf8")),
   );
   return sources.join("\n");

@@ -16,6 +16,8 @@ openclaw triage
 
 The prompt includes the OpenClaw version, platform, Node.js version, prioritized Doctor findings with repair hints, and the diagnostics archive path. The archive contains sanitized config, best-effort Gateway status and health snapshots, operational log summaries, and available stability diagnostics. If the Gateway is unreachable, triage still writes the archive with available local diagnostics and records snapshot failures inside it. If the export itself fails, triage still writes the prompt and explains why the archive is unavailable.
 
+After a failed update, the updater enters triage with the recorded failure. Its prompt keeps the original error, installation versions, recovery state, and bounded sanitized excerpts from failed steps ahead of current Doctor findings. A healthy Doctor check does not erase the failed attempt. If Doctor collection fails, the prompt records that failure and continues with the other available diagnostics.
+
 Secrets, tokens, raw chat payloads, and raw logs are excluded. Paths inside the prompt are shown relative to `~` or `$OPENCLAW_STATE_DIR`; the saved prompt path, archive path, and printed handoff commands retain the real absolute paths needed by your shell. Doctor checks remain advisory and do not apply repairs.
 
 The archive's config summary counts agent, plugin, and channel entries declared in the saved file. Shared channel settings and `$include` directives are excluded from those counts; diagnostics do not expand included files.
@@ -42,6 +44,8 @@ env OPENCLAW_STATE_DIR='<state-dir>' OPENCLAW_CONFIG_PATH='<config-path>' OPENCL
 
 JSON output also includes `detectedAgents`, listing the external agents found on `PATH`. JSON output and non-interactive sessions never start an agent.
 
+`--non-interactive` also makes a terminal session print-only. Updates using `--yes` and managed automatic updates prepare diagnostics without starting an agent. A saved update-failure context stays attached to the printed embedded handoff command.
+
 The Codex command works outside a Git checkout; it does not change Codex sandbox or approval settings.
 
 ## Output and exit codes
@@ -52,12 +56,14 @@ A launched external agent inherits the current environment with the captured ins
 
 ## Options
 
-| Option        | Effect                                                                           |
-| ------------- | -------------------------------------------------------------------------------- |
-| `--json`      | Emit prompt and archive paths, finding counts, detected agents, and commands.    |
-| `--no-export` | Skip the diagnostics archive and only generate the debugging prompt.             |
-| `--run`       | Run one embedded agent turn after checking the model in an interactive terminal. |
+| Option                   | Effect                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| `--json`                 | Emit prompt and archive paths, finding counts, detected agents, and commands.        |
+| `--no-export`            | Skip the diagnostics archive and only generate the debugging prompt.                 |
+| `--run`                  | Run one embedded agent turn after checking the model in an interactive terminal.     |
+| `--non-interactive`      | Prepare diagnostics without a picker or agent launch, including on a terminal.       |
+| `--update-result <path>` | Include the bounded update-failure JSON diagnostics artifact written by the updater. |
 
-`--json` cannot be combined with `--run`.
+`--json` and `--non-interactive` cannot be combined with `--run`.
 
 Related: [Doctor](/cli/doctor), [Gateway](/cli/gateway), and [Troubleshooting](/help/troubleshooting).

@@ -21,6 +21,7 @@ import { assertOpenClawStateWriteAllowedAtPath } from "../../state/openclaw-stat
 import {
   parseTimeoutMsOrExit,
   resolveUpdateRoot,
+  tryResolveInvocationCwd,
   tryWriteCompletionCache,
   type UpdateFinalizeOptions,
 } from "./shared.js";
@@ -41,7 +42,9 @@ import {
   updatePluginsAfterCoreUpdate,
   type PostCorePluginUpdateResult,
 } from "./update-command-plugins.js";
-import { reportPreMutationUpdateFailure } from "./update-command-result.js";
+import { reportPreMutationUpdateFailure, UpdateCommandFailure } from "./update-command-result.js";
+import { resolveServiceRefreshEnv, withUpdateInProgressEnv } from "./update-command-service-env.js";
+import { withUpdateFailureTriage, type UpdateTriageTarget } from "./update-command-triage.js";
 
 const DEFAULT_UPDATE_STEP_TIMEOUT_MS = 30 * 60_000;
 
@@ -106,6 +109,17 @@ type UpdateFinalizeResult = {
 };
 
 export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promise<void> {
+  const invocationCwd = tryResolveInvocationCwd();
+  const target: UpdateTriageTarget = { env: resolveServiceRefreshEnv(process.env, invocationCwd) };
+  await withUpdateFailureTriage(opts, target, () =>
+    withUpdateInProgressEnv(invocationCwd, () => updateFinalizeCommandInternal(opts, target)),
+  );
+}
+
+async function updateFinalizeCommandInternal(
+  opts: UpdateFinalizeOptions,
+  target: UpdateTriageTarget,
+): Promise<void> {
   suppressDeprecations();
   const finalizationStartedAt = performance.now();
   const phaseTimings: UpdateFinalizePhaseTiming[] = [];
@@ -128,6 +142,7 @@ export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promis
   });
 
   const root = await resolveUpdateRoot();
+  target.root = root;
   let configSnapshot = await runTimedFinalizePhase({
     finalizationStartedAt,
     phaseTimings,
@@ -325,6 +340,14 @@ export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promis
     defaultRuntime.log(theme.muted("Update finalization completed."));
   }
   if (result.status === "error") {
-    defaultRuntime.exit(1);
+    throw new UpdateCommandFailure({
+      status: "error",
+      mode: "unknown",
+      root,
+      reason: "post-update-plugins",
+      postUpdate: { plugins: pluginUpdate },
+      steps: [],
+      durationMs: Math.round(performance.now() - finalizationStartedAt),
+    });
   }
 }

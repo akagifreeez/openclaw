@@ -211,7 +211,7 @@ suite.define(() => {
           await page
             .locator("openclaw-modal-dialog")
             .getByText(
-              "The update failed at install: ENOSPC: no space left on device, write. Dependency install failed. Fix the install error and retry.",
+              "The update failed at install: ENOSPC: no space left on device, write. Dependency install failed. Fix the install error and retry. If Ask OpenClaw is unavailable, run `openclaw triage` on the Gateway host. Diagnose the cause before retrying.",
               { exact: true },
             )
             .waitFor({ timeout: 20_000 });
