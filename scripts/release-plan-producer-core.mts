@@ -219,39 +219,38 @@ function withCandidateSnapshot<T>(
 ): T {
   const snapshotRoot = mkdtempSync(join(tmpdir(), "openclaw-release-candidate-"));
   try {
-    // Only the immediate children of each package directory are ever kept, so list those
-    // directories instead of recursing. A recursive listing emits every tracked file under
-    // extensions/ and packages/ (~1.0MB today) and trips execFileSync's 1MB default maxBuffer
-    // with ENOBUFS once the repository grows past it.
-    const packageDirs = execFileSync(
-      "git",
-      ["ls-tree", "-z", "--name-only", candidateSha, "--", "extensions/", "packages/"],
-      { cwd: repoRoot },
-    )
-      .toString("utf8")
+    // Enumerate package directories, then metadata only. Recursive runtime listings
+    // grow with unrelated source files and can overflow the child-process buffer.
+    const metadataPaths = ["package.json"];
+    for (const directory of git(repoRoot, [
+      "ls-tree",
+      "-d",
+      "-z",
+      "--name-only",
+      candidateSha,
+      "--",
+      "extensions/",
+      "packages/",
+    ])
       .split("\0")
-      .filter(Boolean)
-      .map((dir) => `${dir}/`);
-    const tree = execFileSync(
-      "git",
-      ["ls-tree", "-z", candidateSha, "--", "package.json", ...packageDirs],
-      { cwd: repoRoot },
-    ).toString("utf8");
+      .filter(Boolean)) {
+      metadataPaths.push(`${directory}/package.json`);
+      if (directory.startsWith("extensions/")) {
+        metadataPaths.push(`${directory}/README.md`);
+      }
+    }
+    const tree = execFileSync("git", ["ls-tree", "-z", candidateSha, "--", ...metadataPaths], {
+      cwd: repoRoot,
+    }).toString("utf8");
     const inventoryPaths: string[] = [];
     for (const entry of tree.split("\0").filter(Boolean)) {
       const [metadata, path] = entry.split("\t");
-      if (
-        !path ||
-        (path !== "package.json" &&
-          !/^extensions\/[^/]+\/(?:package\.json|README\.md)$/u.test(path) &&
-          !/^packages\/[^/]+\/package\.json$/u.test(path))
-      ) {
-        continue;
-      }
       if (metadata?.startsWith("120000 ")) {
         throw new Error("candidate package inventory must not contain symbolic links");
       }
-      inventoryPaths.push(path);
+      if (metadata?.startsWith("100") && path) {
+        inventoryPaths.push(path);
+      }
     }
     if (!inventoryPaths.includes("package.json")) {
       throw new Error("candidate package.json is missing");
