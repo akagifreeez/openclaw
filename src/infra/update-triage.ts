@@ -1,8 +1,6 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { formatCliCommand } from "../cli/command-format.js";
 import { formatInstallationTargetCommand } from "../cli/installation-target-format.js";
-import { quoteCliArg } from "../cli/quote-cli-arg.js";
 import { resolveSubprocessExitCode } from "../cli/subprocess-exit-code.js";
 import {
   disableUpdatedPackageCompileCacheEnv,
@@ -142,11 +140,9 @@ export async function runUpdateFailureTriage(params: {
     );
     const message = `Triage could not complete: ${reason}`;
     const command = formatInstallationTargetCommand(
-      formatCliCommand(
-        `openclaw triage${contextPath ? ` --update-result ${quoteCliArg(contextPath)}` : ""}`,
-        targetEnv,
-      ),
+      ["openclaw", "triage", ...(contextPath ? ["--update-result", contextPath] : [])],
       installationTarget,
+      { env: targetEnv },
     );
     const guidance = `On the Gateway host, run ${command} after resolving the diagnostic error.`;
     logError(message);

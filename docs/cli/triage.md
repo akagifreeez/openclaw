@@ -32,12 +32,12 @@ Triage captures the diagnosed installation's resolved state directory, exact con
 
 Embedded triage supports local OpenClaw tools, local CLI harness children, and local Codex native shells over stdio or a local Unix socket. It refuses WebSocket app-server connections, including loopback URLs that may forward to another host, because they cannot establish where native commands execute. Ordinary Codex runs without a triage installation target retain WebSocket support. Selected ACP turns, OpenClaw-provisioned sandboxes, remote/node execution, and a Codex app-server with `remoteWorkspaceRoot` are also unsupported for this local target. Use stdio, a local Unix socket, or the saved external/manual handoff on this machine. Triage does not redirect unsupported routes onto the host or relax native sandbox and approval policy.
 
-On Windows, agents installed only as `.cmd` or `.bat` command shims appear in the manual handoff commands instead of the direct-launch picker.
+On Windows, agents installed only as `.cmd` or `.bat` command shims appear in the manual handoff commands instead of the direct-launch picker. Printed Windows commands target PowerShell, including Windows PowerShell 5.1. They read prompts as UTF-8, preserve literal paths, and restore your installation selectors after the command completes. WSL uses POSIX shell commands.
 
-Non-interactive sessions and the print-only choice provide these POSIX shell handoff commands instead:
+Non-interactive sessions and the print-only choice print commands for one external diagnostic turn or the verified embedded route. External commands read the saved prompt from stdin, so prompt quotes and multiline text do not depend on native command-line argument parsing. On macOS and Linux, the commands look like this:
 
 ```bash
-env OPENCLAW_STATE_DIR='<state-dir>' OPENCLAW_CONFIG_PATH='<config-path>' OPENCLAW_WORKSPACE_DIR='<default-workspace-dir>' claude "$(cat '<prompt-path>')"
+env OPENCLAW_STATE_DIR='<state-dir>' OPENCLAW_CONFIG_PATH='<config-path>' OPENCLAW_WORKSPACE_DIR='<default-workspace-dir>' claude -p < '<prompt-path>'
 env OPENCLAW_STATE_DIR='<state-dir>' OPENCLAW_CONFIG_PATH='<config-path>' OPENCLAW_WORKSPACE_DIR='<default-workspace-dir>' codex exec --skip-git-repo-check - < '<prompt-path>'
 env OPENCLAW_STATE_DIR='<state-dir>' OPENCLAW_CONFIG_PATH='<config-path>' OPENCLAW_WORKSPACE_DIR='<default-workspace-dir>' openclaw triage --run
 ```

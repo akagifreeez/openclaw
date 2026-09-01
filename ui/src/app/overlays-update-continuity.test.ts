@@ -11,6 +11,7 @@ import {
   type RequestFn,
 } from "./overlays-access.test-support.ts";
 import { createApplicationOverlays } from "./overlays.ts";
+import type { UpdateRestartStatusResponse } from "./update-overlay-helpers.ts";
 
 vi.mock("../lib/toast.ts", () => ({ showToast: vi.fn() }));
 
@@ -20,7 +21,14 @@ const HANDOFF_RESPONSE = {
   ok: true,
   handoff: { status: "started" },
   result: { status: "skipped", reason: "managed-service-handoff-started" },
-  sentinel: { payload: { stats: { handoffId: HANDOFF_ID } } },
+  sentinel: {
+    payload: {
+      kind: "update",
+      status: "skipped",
+      ts: 2_000,
+      stats: { handoffId: HANDOFF_ID, reason: "managed-service-handoff-started" },
+    },
+  },
 };
 const HANDOFF_PENDING = {
   sentinel: {
@@ -115,6 +123,116 @@ describe("application update attempt continuity", () => {
 
       expect(overlays.snapshot.updateReconciliationPending).toBe(false);
       expect(overlays.snapshot.updateStatusBanner?.tone).toBe("danger");
+    } finally {
+      overlays.dispose();
+    }
+  });
+
+  it.each([
+    { outcome: "success", pendingFirst: false, handoffId: "next-handoff" },
+    { outcome: "failure", pendingFirst: false, handoffId: "next-handoff" },
+    { outcome: "success", pendingFirst: true, handoffId: "next-handoff" },
+    { outcome: "failure", pendingFirst: true, handoffId: "next-handoff" },
+    { outcome: "success", pendingFirst: false, handoffId: null },
+  ])(
+    "adopts a newer $outcome (pending first: $pendingFirst, handoff: $handoffId)",
+    async ({ outcome, pendingFirst, handoffId }) => {
+      const terminal: UpdateRestartStatusResponse = {
+        sentinel: {
+          kind: "update",
+          status: outcome === "success" ? "ok" : "error",
+          ts: 3_000,
+          stats: {
+            handoffId,
+            reason: outcome === "failure" ? "build-failed" : null,
+            after: { version: "3.0.0" },
+          },
+        },
+      };
+      let response: UpdateRestartStatusResponse = {};
+      const request = vi.fn<RequestFn>(async (method) =>
+        method === "update.run" ? HANDOFF_RESPONSE : response,
+      );
+      const harness = createUpdateHarness(request);
+      const onUpdateFailure = vi.fn();
+      let overlays = createApplicationOverlays(harness.gateway, { onUpdateFailure });
+      try {
+        await overlays.runUpdate();
+        harness.update({ phase: "reconnecting" });
+        response = pendingFirst
+          ? {
+              sentinel: {
+                ...terminal.sentinel,
+                status: "skipped",
+                stats: { handoffId, reason: "managed-service-handoff-started" },
+              },
+            }
+          : terminal;
+        harness.update({ phase: "connected" });
+        await flushMicrotasks();
+        if (pendingFirst) {
+          expect(overlays.snapshot.updateReconciliationPending).toBe(true);
+          expect(onUpdateFailure).not.toHaveBeenCalled();
+          // The successor identity and cleared target must survive a document reload.
+          overlays.dispose();
+          overlays = createApplicationOverlays(harness.gateway, { onUpdateFailure });
+          await flushMicrotasks();
+          response = terminal;
+          await vi.advanceTimersByTimeAsync(1_000);
+        }
+
+        expect(overlays.snapshot.updateReconciliationPending).toBe(false);
+        if (outcome === "success") {
+          expect(overlays.snapshot.updateStatusBanner).toBeNull();
+          expect(showToast).toHaveBeenCalledOnce();
+          expect(onUpdateFailure).not.toHaveBeenCalled();
+        } else {
+          expect(overlays.snapshot.recordedUpdateAttempt?.reason).toBe("build-failed");
+          expect(onUpdateFailure).toHaveBeenCalledOnce();
+          expect(onUpdateFailure.mock.calls[0]?.[0]).toMatchObject({ id: handoffId });
+          expect(onUpdateFailure.mock.calls[0]?.[1].admit()).toBe(true);
+          await overlays.refreshUpdateStatus();
+          expect(onUpdateFailure).toHaveBeenCalledOnce();
+        }
+        expect(request.mock.calls.filter(([method]) => method === "update.run")).toHaveLength(1);
+      } finally {
+        overlays.dispose();
+      }
+    },
+  );
+
+  it("keeps a newer result without installed identity unknown within the original deadline", async () => {
+    let response: UpdateRestartStatusResponse = {};
+    const request = vi.fn<RequestFn>(async (method) =>
+      method === "update.run" ? HANDOFF_RESPONSE : response,
+    );
+    const harness = createUpdateHarness(request);
+    const onUpdateFailure = vi.fn();
+    const overlays = createApplicationOverlays(harness.gateway, { onUpdateFailure });
+    try {
+      await overlays.runUpdate();
+      harness.update({ phase: "reconnecting" });
+      await vi.advanceTimersByTimeAsync(HANDOFF_MS - 1_000);
+      response = {
+        sentinel: { kind: "update", status: "ok", ts: 3_000, stats: { handoffId: "next-handoff" } },
+      };
+      harness.update({ phase: "connected" });
+      await flushMicrotasks();
+      expect(overlays.snapshot.updateReconciliationPending).toBe(true);
+      expect(onUpdateFailure).not.toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(overlays.snapshot.updateReconciliationPending).toBe(false);
+      expect(onUpdateFailure).toHaveBeenCalledOnce();
+      expect(onUpdateFailure.mock.calls[0]?.[0]).toMatchObject({
+        id: "next-handoff",
+        outcome: "unknown",
+        verification: { handoffId: "next-handoff", expectedVersion: null, expectedSha: null },
+      });
+      expect(showToast).not.toHaveBeenCalled();
+      expect(request.mock.calls.filter(([method]) => method === "update.run")).toHaveLength(1);
     } finally {
       overlays.dispose();
     }
@@ -249,16 +367,43 @@ describe("application update attempt continuity", () => {
     }
   });
 
-  it.each(["ok", "error"])("ignores an earlier handoff's %s sentinel", async (status) => {
+  it.each([
+    { kind: "handoff", status: "ok" },
+    { kind: "handoff", status: "error" },
+    { kind: "unmanaged", status: "ok" },
+    { kind: "unmanaged", status: "error" },
+  ])("ignores an earlier $status sentinel for a $kind update", async ({ kind, status }) => {
     let response = {
       sentinel: {
         kind: "update",
         status,
-        stats: { handoffId: "handoff-earlier", after: { version: "2.0.0" } },
+        ts: 1_000,
+        stats: {
+          handoffId: kind === "handoff" ? "handoff-earlier" : undefined,
+          after: { version: "2.0.0" },
+        },
       },
     };
+    const success = {
+      sentinel: {
+        ...HANDOFF_SUCCESS.sentinel,
+        ts: 2_000,
+        stats: {
+          ...HANDOFF_SUCCESS.sentinel.stats,
+          handoffId: kind === "handoff" ? HANDOFF_ID : undefined,
+        },
+      },
+    };
+    const accepted =
+      kind === "handoff"
+        ? HANDOFF_RESPONSE
+        : {
+            ok: true,
+            result: { status: "ok", after: { version: "2.0.0" } },
+            sentinel: { payload: success.sentinel },
+          };
     const request = vi.fn<RequestFn>(async (method) =>
-      method === "update.run" ? HANDOFF_RESPONSE : method === "update.status" ? response : {},
+      method === "update.run" ? accepted : method === "update.status" ? response : {},
     );
     const harness = createUpdateHarness(request);
     const overlays = createApplicationOverlays(harness.gateway);
@@ -272,7 +417,7 @@ describe("application update attempt continuity", () => {
       expect(overlays.snapshot.updateStatusBanner).toBeNull();
       expect(showToast).not.toHaveBeenCalled();
 
-      response = HANDOFF_SUCCESS;
+      response = success;
       await vi.advanceTimersByTimeAsync(1_000);
       expect(overlays.snapshot.updateReconciliationPending).toBe(false);
       expect(showToast).toHaveBeenCalledOnce();

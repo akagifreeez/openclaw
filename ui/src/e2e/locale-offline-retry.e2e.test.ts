@@ -1,7 +1,7 @@
 // Control UI tests prove locale chunk recovery through a real browser reconnect.
 import type { BrowserContext, Page, Route } from "playwright";
 import { expect, it } from "vitest";
-import { SUPPORTED_LOCALES } from "../i18n/lib/registry.ts";
+import { isSupportedLocale, SUPPORTED_LOCALES } from "../i18n/lib/registry.ts";
 import {
   controlUiBundledGatewayUrl,
   installMockGateway,
@@ -63,8 +63,9 @@ suite.define(() => {
     const requests = new Map<string, number>();
     page.on("request", (request) => {
       const match = new URL(request.url()).pathname.match(/\/src\/i18n\/locales\/([^/]+)\.ts$/);
-      if (match?.[1] && match[1] !== "en" && match[1] !== "en-agents") {
-        requests.set(match[1], (requests.get(match[1]) ?? 0) + 1);
+      const locale = match?.[1];
+      if (isSupportedLocale(locale) && locale !== "en") {
+        requests.set(locale, (requests.get(locale) ?? 0) + 1);
       }
     });
 

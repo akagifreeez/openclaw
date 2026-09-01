@@ -9,7 +9,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { formatCliCommand } from "../cli/command-format.js";
 import { formatInstallationTargetCommand } from "../cli/installation-target-format.js";
-import { quoteCliArg } from "../cli/quote-cli-arg.js";
 import { resolveGatewayWindowsTaskName } from "../daemon/constants.js";
 import { resolveLaunchAgentLabel } from "../daemon/launchd-label.js";
 import { resolveLaunchAgentPlistPath } from "../daemon/launchd-service-files.js";
@@ -1467,13 +1466,11 @@ async function spawnManagedServiceUpdateHandoff(
     triageContextPath,
     triageInputPath,
     triageContextCommand: formatInstallationTargetCommand(
-      formatCliCommand(
-        `openclaw triage --update-result ${quoteCliArg(triageContextPath)}`,
-        serviceEnv,
-      ),
+      ["openclaw", "triage", "--update-result", triageContextPath],
       installationTarget,
+      { env: serviceEnv },
     ),
-    triageHint: `Update triage runs after service recovery; see ${logPath} for the outcome. If triage is unavailable, run ${formatInstallationTargetCommand(formatCliCommand("openclaw triage", serviceEnv), installationTarget)} on the Gateway host.`,
+    triageHint: `Update triage runs after service recovery; see ${logPath} for the outcome. If triage is unavailable, run ${formatInstallationTargetCommand(["openclaw", "triage"], installationTarget, { env: serviceEnv })} on the Gateway host.`,
     commandLabel,
     handoffId: params.handoffId,
     nonFailureSkippedReasons: Object.keys(SKIPPED_UPDATE_OUTCOMES),

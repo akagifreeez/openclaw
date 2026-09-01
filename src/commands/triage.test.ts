@@ -143,11 +143,18 @@ describe("triageCommand", () => {
       bundleError: null,
       findings: { error: 1, warning: 1, info: 1 },
       detectedAgents: [],
-      suggestedCommands: [
-        `env OPENCLAW_STATE_DIR='${stateDir}' OPENCLAW_CONFIG_PATH='${path.join(stateDir, "openclaw.json")}' OPENCLAW_WORKSPACE_DIR='${path.join(stateDir, "workspace")}' claude "$(cat '${promptPath}')"`,
-        `env OPENCLAW_STATE_DIR='${stateDir}' OPENCLAW_CONFIG_PATH='${path.join(stateDir, "openclaw.json")}' OPENCLAW_WORKSPACE_DIR='${path.join(stateDir, "workspace")}' codex exec --skip-git-repo-check - < '${promptPath}'`,
-        `env OPENCLAW_STATE_DIR='${stateDir}' OPENCLAW_CONFIG_PATH='${path.join(stateDir, "openclaw.json")}' OPENCLAW_WORKSPACE_DIR='${path.join(stateDir, "workspace")}' openclaw triage --run`,
-      ],
+      suggestedCommands:
+        process.platform === "win32"
+          ? [
+              expect.stringContaining("| & claude -p"),
+              expect.stringContaining("| & codex exec --skip-git-repo-check -"),
+              expect.stringContaining("& openclaw triage --run"),
+            ]
+          : [
+              `env OPENCLAW_STATE_DIR='${stateDir}' OPENCLAW_CONFIG_PATH='${path.join(stateDir, "openclaw.json")}' OPENCLAW_WORKSPACE_DIR='${path.join(stateDir, "workspace")}' claude -p < '${promptPath}'`,
+              `env OPENCLAW_STATE_DIR='${stateDir}' OPENCLAW_CONFIG_PATH='${path.join(stateDir, "openclaw.json")}' OPENCLAW_WORKSPACE_DIR='${path.join(stateDir, "workspace")}' codex exec --skip-git-repo-check - < '${promptPath}'`,
+              `env OPENCLAW_STATE_DIR='${stateDir}' OPENCLAW_CONFIG_PATH='${path.join(stateDir, "openclaw.json")}' OPENCLAW_WORKSPACE_DIR='${path.join(stateDir, "workspace")}' openclaw triage --run`,
+            ],
     });
     expect(await fs.readFile(promptPath, "utf8")).toContain("[error] core/error: broken");
     expect(mocks.callGatewayFromCliWithTransport).not.toHaveBeenCalled();
@@ -182,7 +189,7 @@ describe("triageCommand", () => {
       for (const command of ["claude", "codex", "openclaw"]) {
         await fs.writeFile(
           path.join(bin, command),
-          '#!/bin/sh\nprintf "%s\\n" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$OPENCLAW_WORKSPACE_DIR"\n',
+          `#!/bin/sh\nprintf "%s\\n" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$OPENCLAW_WORKSPACE_DIR"\n${command === "openclaw" ? "" : "cat\n"}`,
           { mode: 0o700 },
         );
       }
@@ -192,12 +199,15 @@ describe("triageCommand", () => {
         promptPath: string;
         suggestedCommands: string[];
       };
-      for (const command of report.suggestedCommands) {
+      const prompt = await fs.readFile(report.promptPath, "utf8");
+      for (const [index, command] of report.suggestedCommands.entries()) {
         const { stdout } = await promisify(execFile)("/bin/sh", ["-c", command], {
           env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` },
           timeout: 10_000,
         });
-        expect(stdout).toBe(`${originalState}\n${configPath}\n${defaultWorkspaceDir}\n`);
+        expect(stdout).toBe(
+          `${originalState}\n${configPath}\n${defaultWorkspaceDir}\n${index < 2 ? prompt : ""}`,
+        );
       }
       expect(await fs.readFile(report.promptPath, "utf8")).not.toContain(home);
       expect(process.env.OPENCLAW_STATE_DIR).toBeUndefined();
@@ -299,7 +309,10 @@ describe("triageCommand", () => {
     const runtime = createRuntime();
     await triageCommand(runtime, { json: true, noExport: true, updateResult: inputPath });
     const report = runtime.writeJson.mock.calls[0]?.[0] as { suggestedCommands: string[] };
-    const savedPath = report.suggestedCommands[2]?.match(/ --update-result '([^']+)'$/u)?.[1];
+    const savedArgument = report.suggestedCommands[2]?.match(
+      / --update-result (?:'([^']+)'|(\S+))/u,
+    );
+    const savedPath = savedArgument?.[1] ?? savedArgument?.[2];
     if (!savedPath) {
       throw new Error("Saved triage command is missing its failed update input");
     }
@@ -513,8 +526,10 @@ describe("triageCommand", () => {
     { agent: "claude", executablePath: "C:\\tools\\claude.cmd" },
     { agent: "codex", executablePath: "C:\\tools\\codex.BAT" },
   ])(
-    "keeps Windows $agent command shims as manual-only handoffs",
+    "keeps Windows $agent command shims as executable PowerShell manual handoffs",
     async ({ agent, executablePath }) => {
+      const configPath = path.join(stateDir, "operator's $config`file.json");
+      vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
       const platform = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
       mocks.resolveExecutablePath.mockImplementation((binary: string) =>
         binary === agent ? executablePath : undefined,
@@ -532,9 +547,18 @@ describe("triageCommand", () => {
       expect(mocks.select.mock.calls[0]?.[0]?.options).toEqual([
         { value: { kind: "print" }, label: "Just print the commands" },
       ]);
-      expect(runtime.log).toHaveBeenCalledWith(
-        expect.stringMatching(new RegExp(`^  env .* ${agent} `, "u")),
-      );
+      const commands = runtime.log.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith("  "));
+      expect(commands).toHaveLength(3);
+      for (const command of commands) {
+        expect(command).not.toMatch(/^  env /u);
+        expect(command).toContain(`'${configPath.replaceAll("'", "''")}'`);
+      }
+      expect(commands[0]).toContain("| & claude -p");
+      expect(commands[1]).toContain("| & codex exec --skip-git-repo-check -");
+      expect(commands[1]).toContain("Get-Content -Raw -Encoding UTF8 -LiteralPath ");
+      expect(commands[2]).toContain("& openclaw triage --run");
       expect(mocks.spawn).not.toHaveBeenCalled();
     },
   );
@@ -610,7 +634,11 @@ describe("triageCommand", () => {
 
     expect(runtime.error).toHaveBeenCalledWith("Failed to launch claude: permission denied");
     expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringMatching(/^Run manually: env .* claude /u),
+      expect.stringMatching(
+        process.platform === "win32"
+          ? /Run manually: .*\| & claude -p/u
+          : /^Run manually: env .* claude /u,
+      ),
     );
     expect(runtime.exit).toHaveBeenCalledExactlyOnceWith(1);
   });

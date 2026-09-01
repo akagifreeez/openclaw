@@ -22,42 +22,172 @@ describe("custodian page session lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  it("starts fresh after the gateway invalidates the live session", async () => {
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce({
-        sessionId: "engine-session-before-error",
-        reply: "Welcome.",
-        action: "none",
-      })
-      .mockRejectedValueOnce(
-        new GatewayProtocolRequestError({
-          code: "UNAVAILABLE",
-          message: "OpenClaw inference became unavailable.",
-          details: buildSystemAgentSessionInvalidatedErrorDetails(),
-        }),
-      )
-      .mockResolvedValueOnce({
-        sessionId: "engine-session-after-error",
-        reply: "Fresh session ready.",
-        action: "none",
+  it.each([
+    { action: "composer", invalidated: true },
+    { action: "cancel", invalidated: true },
+    { action: "option", invalidated: true },
+    { action: "cancel", invalidated: false },
+    { action: "option", invalidated: false },
+    { action: "next sensitive prompt", invalidated: false },
+  ])(
+    "retires input safely after $action (session invalidated: $invalidated)",
+    async ({ action, invalidated }) => {
+      const sensitive = action !== "composer";
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({
+          sessionId: "engine-session-before-error",
+          reply: "Welcome.",
+          action: "none",
+          sensitive,
+          ...(sensitive
+            ? {
+                question: {
+                  id: "credentials",
+                  header: "Credentials",
+                  question: "Enter a credential or choose another method.",
+                  options: [{ label: "Use environment" }, { label: "Configure later" }],
+                },
+              }
+            : {}),
+        })
+        .mockImplementationOnce(() => {
+          if (invalidated) {
+            throw new GatewayProtocolRequestError({
+              code: "UNAVAILABLE",
+              message: "OpenClaw inference became unavailable.",
+              details: buildSystemAgentSessionInvalidatedErrorDetails(),
+            });
+          }
+          return {
+            sessionId: "engine-session-before-error",
+            reply: "Ready again.",
+            action: "none",
+            sensitive: action === "next sensitive prompt",
+          };
+        })
+        .mockResolvedValue({
+          sessionId: "engine-session-after-error",
+          reply: "Ready again.",
+          action: "none",
+        });
+      const { context } = createContext(request);
+      const { page } = await mountPage(context);
+      await waitForFast(() => expect(page.textContent).toContain("Welcome."));
+      const sensitiveDraft = "test-token-placeholder";
+
+      if (sensitive) {
+        const password = page.querySelector<HTMLInputElement>('input[type="password"]')!;
+        password.value = sensitiveDraft;
+        password.dispatchEvent(new Event("input"));
+        await page.updateComplete;
+        const selector = action === "cancel" ? ".option-card__skip" : ".option-card__choice";
+        page.querySelector<HTMLButtonElement>(selector)!.click();
+      } else {
+        await sendMessage(page, "status please");
+      }
+
+      await waitForFast(() => expect(page.textContent).toContain("Ready again."));
+      const settledRequestCount = invalidated ? 3 : 2;
+      expect(request).toHaveBeenCalledTimes(settledRequestCount);
+      if (invalidated) {
+        expect(request.mock.calls[2]?.[1]).toMatchObject({
+          sessionId: expect.stringMatching(/^control-ui-onboarding-/),
+        });
+        expect(request.mock.calls[2]?.[1]?.sessionId).not.toBe("engine-session-before-error");
+        expect(request.mock.calls[2]?.[1]).not.toHaveProperty("message");
+        expect(page.textContent).toContain("Earlier");
+        expect(page.textContent).toContain("started a fresh session");
+      }
+      if (sensitive) {
+        const composer = page.querySelector<HTMLTextAreaElement | HTMLInputElement>(
+          action === "next sensitive prompt" ? 'input[type="password"]' : "textarea",
+        )!;
+        expect.soft(composer.value).toBe("");
+        composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        await waitForFast(() => expect(page.store.sending).toBe(false));
+        await page.updateComplete;
+        expect.soft(request).toHaveBeenCalledTimes(settledRequestCount);
+        expect(page.textContent).not.toContain(sensitiveDraft);
+        expect(request.mock.calls.some(([, params]) => params.message === sensitiveDraft)).toBe(
+          false,
+        );
+      }
+    },
+  );
+
+  it.each([
+    { prompt: "composer", invalidated: false },
+    { prompt: "composer", invalidated: true },
+    { prompt: "wizard", invalidated: false },
+    { prompt: "wizard", invalidated: true },
+  ])(
+    "restores an ordinary draft after a sensitive $prompt (session invalidated: $invalidated)",
+    async ({ prompt, invalidated }) => {
+      const question = {
+        id: "credentials",
+        header: "Credentials",
+        question: "How should OpenClaw authenticate?",
+        options: [{ label: "Enter credential" }, { label: "Use environment" }],
+      };
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({ sessionId: "draft-session", reply: "Ready.", question })
+        .mockResolvedValueOnce({
+          sessionId: "draft-session",
+          reply: "Enter the credential.",
+          sensitive: true,
+          ...(prompt === "wizard"
+            ? {
+                wizardInputPending: true,
+                step: { id: "credential", type: "text", message: "Credential", sensitive: true },
+              }
+            : { question }),
+        })
+        .mockImplementationOnce(() => {
+          if (invalidated) {
+            throw new GatewayProtocolRequestError({
+              code: "UNAVAILABLE",
+              message: "The sensitive session expired.",
+              details: buildSystemAgentSessionInvalidatedErrorDetails(),
+            });
+          }
+          return { sessionId: "draft-session", reply: "Ready again." };
+        })
+        .mockResolvedValue({ sessionId: "replacement-session", reply: "Ready again." });
+      const { context } = createContext(request);
+      const { page } = await mountPage(context);
+      await waitForFast(() => expect(page.textContent).toContain("Ready."));
+      const draft = "Keep my ordinary question";
+      const composer = page.querySelector<HTMLTextAreaElement>("textarea")!;
+      composer.value = draft;
+      composer.dispatchEvent(new Event("input"));
+      await page.updateComplete;
+      page.querySelector<HTMLButtonElement>(".option-card__choice")!.click();
+      const password = await waitForFast(() => {
+        const field = page.querySelector<HTMLInputElement>('input[type="password"]');
+        expect(field).not.toBeNull();
+        return field!;
       });
-    const { context } = createContext(request);
-    const { page } = await mountPage(context);
-    await waitForFast(() => expect(page.textContent).toContain("Welcome."));
-
-    await sendMessage(page, "status please");
-
-    await waitForFast(() => expect(request).toHaveBeenCalledTimes(3));
-    await waitForFast(() => expect(page.textContent).toContain("Fresh session ready."));
-    expect(request.mock.calls[2]?.[1]).toMatchObject({
-      sessionId: expect.stringMatching(/^control-ui-onboarding-/),
-    });
-    expect(request.mock.calls[2]?.[1]?.sessionId).not.toBe("engine-session-before-error");
-    expect(request.mock.calls[2]?.[1]).not.toHaveProperty("message");
-    expect(page.textContent).toContain("Earlier");
-    expect(page.textContent).toContain("started a fresh session");
-  });
+      expect.soft(password.value).toBe("");
+      const secret = "test-token-placeholder";
+      password.value = secret;
+      password.dispatchEvent(new Event("input"));
+      await page.updateComplete;
+      const cancel =
+        prompt === "wizard" ? ".custodian__wizard-cancel" : ".option-card__skip:not([disabled])";
+      page.querySelector<HTMLButtonElement>(cancel)!.click();
+      await waitForFast(() => expect(page.textContent).toContain("Ready again."));
+      const restored = page.querySelector<HTMLTextAreaElement>("textarea")!;
+      expect(restored.value).toBe(draft);
+      expect(page.textContent).not.toContain(secret);
+      expect(request.mock.calls.some(([, params]) => params.message === secret)).toBe(false);
+      restored.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await waitForFast(() => expect(request.mock.calls.at(-1)?.[1]?.message).toBe(draft));
+      await page.updateComplete;
+      expect(restored.value).toBe("");
+    },
+  );
 
   it("starts fresh after the gateway evicts a typed wizard session", async () => {
     const request = vi

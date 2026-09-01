@@ -19,12 +19,17 @@ verification timeout is presented as an unknown outcome. The tab remembers the
 latest 32 investigated attempt identities, scoped to their Gateway and profile.
 Status checks, switching between those scopes, and reloading the same tab do not
 automatically send those investigations again. If the Gateway or agent is
-unavailable, use `openclaw triage` on the Gateway host.
+unavailable, use `openclaw triage` on the Gateway host. Automatic diagnosis keeps
+your unsent composer draft, including when its conversation session must restart.
 
 **Control UI → Settings → Updates** keeps the latest recorded attempt visible,
 including its time, before/after identities, reason code, failing step, and
-bounded diagnostic detail. Intentional cancellations, already-current installs,
-and updates still in progress do not start triage.
+bounded diagnostic detail. A version or revision verification failure stays
+visible when a status check rereads the same attempt. An unknown verification
+outcome resolves when the expected version or revision arrives, or when the
+same attempt reports its final failure or cancellation. A newer recorded attempt
+can also replace it. Intentional cancellations, already-current installs, and
+updates still in progress do not start triage.
 
 Control UI remediation uses typed product actions only. It leads with an
 authenticated Gateway or native action when the connected UI has the required

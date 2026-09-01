@@ -10,7 +10,6 @@ import { readGatewayOperatorAccess } from "./operator-access.ts";
 import type { ApplicationUpdateOverlaySnapshot } from "./overlays-types.ts";
 import {
   classifyUpdateRunResponse,
-  createUpdateCampaignStatusPoller,
   createUpdateStatusRefresher,
   createUpdateVerificationController,
   projectUpdateSentinel,
@@ -41,6 +40,41 @@ export type ApplicationUpdateOverlayHooks = {
   onUpdateFailure?: (failure: UpdateFailureTriage, admission: UpdateTriageAdmission) => void;
 };
 
+function createUpdateCampaignStatusPoller(params: {
+  canPoll: () => boolean;
+  refresh: () => Promise<void>;
+}) {
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  let generation = 0;
+  const stop = () => {
+    generation += 1;
+    if (timer !== null) {
+      globalThis.clearTimeout(timer);
+      timer = null;
+    }
+  };
+  const poll = async () => {
+    timer = null;
+    const currentGeneration = generation;
+    if (params.canPoll()) {
+      await params.refresh();
+    }
+    if (currentGeneration === generation) {
+      sync();
+    }
+  };
+  const sync = () => {
+    if (!params.canPoll()) {
+      stop();
+      return;
+    }
+    if (timer === null) {
+      timer = globalThis.setTimeout(() => void poll(), 5_000);
+    }
+  };
+  return { stop, sync };
+}
+
 export function createApplicationUpdateOverlays(
   gateway: ApplicationGateway,
   onChange: () => void,
@@ -69,7 +103,6 @@ export function createApplicationUpdateOverlays(
   const savedUpdate = updateNotices.notice;
   let pendingUpdate: PendingUpdateReconciliation | null =
     savedUpdate && savedUpdate.kind !== "verified" ? savedUpdate : null;
-  let pendingUpdateProfileId = savedUpdate?.profileId ?? null;
   let pendingUpdateTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   let updateRequestRunning = false;
   let updateStatusRevision = 0;
@@ -143,15 +176,29 @@ export function createApplicationUpdateOverlays(
       },
     });
   };
-  const prepareFailureTriage = (failure: UpdateFailureTriage) => {
-    if (currentFailure?.failure.id === failure.id) {
+  const prepareFailureTriage = (
+    failure: UpdateFailureTriage,
+    profileId = noticeScope().profileId,
+  ) => {
+    // Changed unsent facts need a new owner so queued old admissions fail closed.
+    // Identical polls and consumed attempts retain their one-shot presentation.
+    if (
+      currentFailure?.failure.id === failure.id &&
+      currentFailure.profileId === profileId &&
+      (updateNotices.hasTriaged({ gateway: updateGatewayScope, profileId }, failure.id) ||
+        JSON.stringify(currentFailure.failure) === JSON.stringify(failure))
+    ) {
+      currentFailure.failure = failure;
       return false;
     }
-    currentFailure = { failure, profileId: noticeScope().profileId };
+    currentFailure = { failure, profileId };
     return true;
   };
-  const publishUpdateFailure = (failure: UpdateFailureTriage) => {
-    const prepared = prepareFailureTriage(failure);
+  const publishUpdateFailure = (
+    failure: UpdateFailureTriage,
+    profileId = noticeScope().profileId,
+  ) => {
+    const prepared = prepareFailureTriage(failure, profileId);
     snapshot = {
       ...snapshot,
       recordedUpdateAttempt: failure.attempt,
@@ -171,11 +218,7 @@ export function createApplicationUpdateOverlays(
   const setPendingUpdate = (pending: PendingUpdateReconciliation | null) => {
     pendingUpdate = pending;
     clearPendingUpdateTimer();
-    updateNotices.write(
-      pending
-        ? { ...pending, gateway: updateGatewayScope, profileId: pendingUpdateProfileId }
-        : null,
-    );
+    updateNotices.write(pending ? { ...pending, gateway: updateGatewayScope } : null);
     if (pending) {
       // This budget belongs to admission, not reconnect. A failed-closed
       // Gateway may never return to run the verification loop below.
@@ -185,15 +228,8 @@ export function createApplicationUpdateOverlays(
             return;
           }
           updateRunGeneration += 1;
-          updateVerification.cancel();
           updateRequestRunning = false;
-          setPendingUpdate(null);
-          publishUpdateFailure({
-            id: pending.handoffId ?? pending.requestId,
-            outcome: "unknown",
-            attempt: null,
-            banner: resolveUnknownUpdateOutcomeBanner(),
-          });
+          updateVerification.expire(resolveUnknownUpdateOutcomeBanner());
         },
         Math.max(0, pending.deadlineAtMs - Date.now()),
       );
@@ -201,6 +237,7 @@ export function createApplicationUpdateOverlays(
   };
   const updateVerification = createUpdateVerificationController({
     getPending: () => pendingUpdate,
+    updatePending: setPendingUpdate,
     clearPending: () => {
       setPendingUpdate(null);
     },
@@ -217,7 +254,11 @@ export function createApplicationUpdateOverlays(
     if (pendingUpdate) {
       return;
     }
-    const { failure, ...status } = projectUpdateStatusResponse(response, snapshot);
+    const { failure, ...status } = projectUpdateStatusResponse(
+      response,
+      snapshot,
+      currentFailure?.failure,
+    );
     const prepared = failure ? prepareFailureTriage(failure) : false;
     if (!failure && response.sentinel?.kind === "update") {
       currentFailure = null;
@@ -300,7 +341,7 @@ export function createApplicationUpdateOverlays(
     activeClient = next.client;
     activeHello = next.hello;
     connectedSource = nextConnectedSource;
-    if (currentFailure && currentFailure.profileId !== (next.selfUser?.id ?? null)) {
+    if (connected && currentFailure && currentFailure.profileId !== (next.selfUser?.id ?? null)) {
       currentFailure = null;
     }
     if (connectedSourceChanged) {
@@ -331,7 +372,7 @@ export function createApplicationUpdateOverlays(
     }
     if (
       pendingUpdate &&
-      (!operatorAccess.canAdmin || pendingUpdateProfileId !== (next.selfUser?.id ?? null))
+      (!operatorAccess.canAdmin || pendingUpdate.profileId !== (next.selfUser?.id ?? null))
     ) {
       updateRunGeneration += 1;
       updateStatusRevision += 1;
@@ -452,9 +493,9 @@ export function createApplicationUpdateOverlays(
         ) {
           return;
         }
-        pendingUpdateProfileId = gateway.snapshot.selfUser?.id ?? null;
         admittedPending = {
           requestId,
+          profileId: gateway.snapshot.selfUser?.id ?? null,
           kind: "ambiguous",
           expectedVersion: snapshot.updateAvailable?.latestVersion?.trim() || null,
           expectedSha: resolveExpectedUpdateSha(snapshot.updateSchedule, snapshot.updateAvailable),
@@ -513,16 +554,16 @@ export function createApplicationUpdateOverlays(
         ) {
           return;
         }
-        setPendingUpdate(null);
-        publishUpdateFailure({
-          id: requestId,
-          outcome: "unknown",
-          attempt: null,
-          banner: {
-            tone: "danger",
-            text: `${t("updates.error", { error: formatUiError(error) })} ${resolveUnknownUpdateOutcomeBanner().text}`,
-          },
-        });
+        const banner: ApplicationStatusBanner = {
+          tone: "danger",
+          text: t("updates.error", { error: formatUiError(error) }),
+        };
+        if (admittedPending) {
+          banner.text += ` ${resolveUnknownUpdateOutcomeBanner().text}`;
+          updateVerification.expire(banner);
+        } else {
+          publishUpdateBanner(banner);
+        }
       } finally {
         if (
           !disposed &&

@@ -11,10 +11,10 @@ import { i18n } from "../i18n/index.ts";
 import type {
   ApplicationStatusBanner,
   PendingUpdateReconciliation,
+  UpdateRestartStatusResponse,
 } from "./update-overlay-helpers.ts";
 import {
   createUpdateVerificationController,
-  formatUpdateCampaignLabel,
   projectUpdateStatusResponse,
   resolveUpdateStatusBanner,
 } from "./update-overlay-helpers.ts";
@@ -24,6 +24,7 @@ import {
   readUpdateSchedule,
   readUpdateScheduleValue,
 } from "./update-schedule-dto.ts";
+import { formatUpdateCampaignLabel } from "./update-schedule-projection.ts";
 
 const TRIAGE_HINT = "Run openclaw triage on the Gateway host before retrying.";
 const translations: Record<string, string> = {
@@ -64,18 +65,33 @@ afterEach(() => {
 });
 
 async function verifyUpdate(params: {
-  pending: Omit<PendingUpdateReconciliation, "requestId" | "handoffId" | "deadlineAtMs">;
+  pending: Omit<
+    PendingUpdateReconciliation,
+    "requestId" | "profileId" | "handoffId" | "deadlineAtMs"
+  >;
   response: unknown;
   advanceToMs?: number;
   onVerifiedInstall?: (identity: { version: string | null; sha: string | null }) => void;
 }): Promise<ApplicationStatusBanner | null | undefined> {
   vi.useFakeTimers();
   vi.setSystemTime(0);
+  const response = params.response as UpdateRestartStatusResponse | null;
+  const handoffId = params.pending.kind === "handoff" ? "verification-handoff" : null;
+  // An admitted update carries its server record; restart-health rewrites retain its timestamp.
+  const sentinel = response?.sentinel
+    ? {
+        ...response.sentinel,
+        ts: 1_000,
+        stats: { ...response.sentinel.stats, ...(handoffId ? { handoffId } : {}) },
+      }
+    : null;
   let banner: ApplicationStatusBanner | null | undefined;
   const pending: PendingUpdateReconciliation = {
     ...params.pending,
     requestId: "request-current",
-    handoffId: null,
+    profileId: null,
+    handoffId,
+    record: sentinel ? { id: handoffId ?? "recorded:1000:ok", timestampMs: 1_000 } : undefined,
     deadlineAtMs: 35 * 60_000,
   };
   const client = {
@@ -83,11 +99,12 @@ async function verifyUpdate(params: {
       if (params.advanceToMs !== undefined) {
         vi.setSystemTime(params.advanceToMs);
       }
-      return params.response;
+      return response ? { ...response, sentinel } : null;
     }),
   } as unknown as GatewayBrowserClient;
   const controller = createUpdateVerificationController({
     getPending: () => pending,
+    updatePending: vi.fn(),
     clearPending: vi.fn(),
     isCurrent: () => true,
     publish: vi.fn(),

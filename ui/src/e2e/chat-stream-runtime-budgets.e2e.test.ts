@@ -7,6 +7,7 @@ import {
   installMockGateway,
   requireRecord,
   requireString,
+  waitForChatScrollIdle,
 } from "./chat-flow.test-support.ts";
 
 // Durable runtime budgets for the chat streaming surface. Byte budgets
@@ -631,6 +632,8 @@ suite.define(() => {
         const composer = page.locator(".agent-chat__composer-combobox textarea");
         await composer.fill("seed");
         await page.getByRole("button", { name: "Send message" }).waitFor();
+        // Finish startup scrolling before measuring steady-state composer invalidations.
+        await waitForChatScrollIdle(page);
         await installRenderProbe(page);
         await resetRenderProbe(page);
 

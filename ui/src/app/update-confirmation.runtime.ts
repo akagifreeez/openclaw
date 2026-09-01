@@ -14,7 +14,7 @@ import { registerUpdateActionsEnglish } from "../i18n/locales/en-update-actions.
 import "../components/modal-dialog.ts";
 import { postNativeUpdate } from "./native-link-routing.ts";
 import type { ConfirmAndStartUpdateParams, UpdateProgress } from "./update-confirmation.ts";
-import { formatUpdateTargetLabel } from "./update-overlay-helpers.ts";
+import { formatUpdateTargetLabel } from "./update-schedule-projection.ts";
 
 registerUpdateActionsEnglish();
 

@@ -25,17 +25,35 @@ export function presentUpdateFailureTriage(
     return;
   }
   const attempt = failure.attempt;
+  const verification = failure.verification;
+  const record = failure.reconciledRecord;
+  // Git updates may keep their version. Preserve commits and correlation before log text.
   const identity = (version: string | null, sha: string | null) =>
-    version ?? sha ?? t("common.unknown");
-  const details = attempt
-    ? [
-        `${t("updates.page.attemptedAt")}: ${new Date(attempt.timestampMs).toISOString()}`,
-        `${t("updates.page.attemptReason")}: ${attempt.reason}`,
-        `${t("updates.page.beforeUpdate")}: ${identity(attempt.beforeVersion, attempt.beforeSha)}`,
-        `${t("updates.page.afterAttempt")}: ${identity(attempt.afterVersion, attempt.afterSha)}`,
-        ...(attempt.failure ? [`${attempt.failure.step}: ${attempt.failure.detail}`] : []),
-      ]
-    : [failure.banner.text];
+    [sha, version].filter(Boolean).join(" · ") || t("common.unknown");
+  const details = [
+    ...(verification?.expectedVersion || verification?.expectedSha
+      ? [
+          `${t("updates.triage.expectedTarget")}: ${identity(verification.expectedVersion, verification.expectedSha)}`,
+        ]
+      : []),
+    ...(verification?.handoffId
+      ? [`${t("updates.triage.handoff")}: ${verification.handoffId}`]
+      : []),
+    ...(record
+      ? [
+          `${t("updates.triage.observedRecord")}: ${record.id ?? t("common.unknown")} · ${record.timestampMs === null ? t("common.unknown") : new Date(record.timestampMs).toISOString()}`,
+        ]
+      : []),
+    ...(attempt
+      ? [
+          `${t("updates.page.attemptedAt")}: ${new Date(attempt.timestampMs).toISOString()}`,
+          `${t("updates.page.attemptReason")}: ${attempt.reason}`,
+          `${t("updates.page.beforeUpdate")}: ${identity(attempt.beforeVersion, attempt.beforeSha)}`,
+          `${t("updates.page.afterAttempt")}: ${identity(attempt.afterVersion, attempt.afterSha)}`,
+          ...(attempt.failure ? [`${attempt.failure.step}: ${attempt.failure.detail}`] : []),
+        ]
+      : [failure.banner.text]),
+  ];
   const title = t(
     failure.outcome === "unknown" ? "updates.triage.unknownTitle" : "updates.triage.failedTitle",
   );

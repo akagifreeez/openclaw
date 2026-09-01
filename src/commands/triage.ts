@@ -94,10 +94,6 @@ function resolveTriageHandoff(options: TriageOptions): TriageHandoffMode {
   return process.stdin.isTTY && process.stdout.isTTY ? { kind: "offer" } : { kind: "print" };
 }
 
-function quoteShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 async function prepareTriage(runtime: RuntimeEnv, options: TriagePreparationOptions) {
   let findings: readonly HealthFinding[];
   try {
@@ -131,15 +127,21 @@ async function prepareTriage(runtime: RuntimeEnv, options: TriagePreparationOpti
   await fs.writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
 
   // Operator-facing paths and shell commands stay real; only agent prompt content is path-redacted.
-  const quotedPath = quoteShellArgument(promptPath);
-  const updateContextArgument = updateResultPath
-    ? ` --update-result ${quoteShellArgument(updateResultPath)}`
-    : "";
   const suggestedCommands = [
-    `claude "$(cat ${quotedPath})"`,
-    `codex exec --skip-git-repo-check - < ${quotedPath}`,
-    `openclaw triage --run${updateContextArgument}`,
-  ].map((command) => formatInstallationTargetCommand(command, target));
+    formatInstallationTargetCommand(["claude", "-p"], target, { stdinPath: promptPath }),
+    formatInstallationTargetCommand(["codex", "exec", "--skip-git-repo-check", "-"], target, {
+      stdinPath: promptPath,
+    }),
+    formatInstallationTargetCommand(
+      [
+        "openclaw",
+        "triage",
+        "--run",
+        ...(updateResultPath ? ["--update-result", updateResultPath] : []),
+      ],
+      target,
+    ),
+  ];
   const findingCounts: Record<HealthFindingSeverity, number> = {
     error: 0,
     warning: 0,

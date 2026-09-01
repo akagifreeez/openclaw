@@ -148,40 +148,53 @@ describe("update triage child lifecycle", () => {
     });
   });
 
-  it("keeps a bounded diagnostic failure cause after redacting credentials", async () => {
-    const { target } = await createInstalledTriage();
-    target.env.OPENCLAW_STATE_DIR = path.join(target.root, "state directory's");
-    const configPath = path.join(target.root, "custom config.json");
-    const workspaceDir = path.join(target.root, "custom workspace");
-    const targetEnv = {
-      ...target.env,
-      OPENCLAW_CONFIG_PATH: configPath,
-      OPENCLAW_WORKSPACE_DIR: workspaceDir,
-    };
-    const credential = "synthetic-triage-bearer-value";
-    vi.spyOn(exec, "runCommandWithTimeout").mockRejectedValueOnce(
-      new Error(`ENOSPC Authorization: Bearer ${credential}\n${"detail ".repeat(1000)}`),
-    );
-    const result = await runUpdateFailureTriage({
-      failure: { error: "Update failed" },
-      target: { ...target, env: targetEnv },
-      mode: "json",
-      runtime: { log: vi.fn(), error: vi.fn() },
-    });
-    expect(result).toMatchObject({ status: "failed", hint: expect.stringContaining("ENOSPC") });
-    expect(JSON.stringify(result)).not.toContain(credential);
-    if (result.status === "failed") {
-      expect(result.hint.split("\n")[0]?.length).toBeLessThan(284);
-      expect(result.contextPath).toEqual(expect.any(String));
-      expect(result.hint).toContain(`--update-result ${quoteCliArg(result.contextPath!)}`);
-      expect(result.hint).toContain(
-        `OPENCLAW_STATE_DIR=${quoteCliArg(targetEnv.OPENCLAW_STATE_DIR)}`,
+  it.each(["linux", "win32"] as const)(
+    "keeps a bounded diagnostic failure cause with an executable %s host command",
+    async (platformName) => {
+      const { target } = await createInstalledTriage();
+      vi.spyOn(process, "platform", "get").mockReturnValue(platformName);
+      target.env.OPENCLAW_STATE_DIR = path.join(target.root, "state directory's");
+      const configPath = path.join(target.root, "custom config.json");
+      const workspaceDir = path.join(target.root, "custom workspace");
+      const targetEnv = {
+        ...target.env,
+        OPENCLAW_CONFIG_PATH: configPath,
+        OPENCLAW_WORKSPACE_DIR: workspaceDir,
+      };
+      const credential = "synthetic-triage-bearer-value";
+      vi.spyOn(exec, "runCommandWithTimeout").mockRejectedValueOnce(
+        new Error(`ENOSPC Authorization: Bearer ${credential}\n${"detail ".repeat(1000)}`),
       );
-      expect(result.hint).toContain(`OPENCLAW_CONFIG_PATH=${quoteCliArg(configPath)}`);
-      expect(result.hint).toContain(`OPENCLAW_WORKSPACE_DIR=${quoteCliArg(workspaceDir)}`);
-      await expect(fs.stat(result.contextPath!)).resolves.toMatchObject({
-        size: expect.any(Number),
+      const result = await runUpdateFailureTriage({
+        failure: { error: "Update failed" },
+        target: { ...target, env: targetEnv },
+        mode: "json",
+        runtime: { log: vi.fn(), error: vi.fn() },
       });
-    }
-  });
+      expect(result).toMatchObject({ status: "failed", hint: expect.stringContaining("ENOSPC") });
+      expect(JSON.stringify(result)).not.toContain(credential);
+      if (result.status === "failed") {
+        expect(result.hint.split("\n")[0]?.length).toBeLessThan(284);
+        expect(result.contextPath).toEqual(expect.any(String));
+        if (platformName === "win32") {
+          expect(result.hint).toContain(
+            `& openclaw triage --update-result '${result.contextPath!.replaceAll("'", "''")}'`,
+          );
+          for (const selector of [targetEnv.OPENCLAW_STATE_DIR, configPath, workspaceDir]) {
+            expect(result.hint).toContain(`'${selector.replaceAll("'", "''")}'`);
+          }
+        } else {
+          expect(result.hint).toContain(`--update-result ${quoteCliArg(result.contextPath!)}`);
+          expect(result.hint).toContain(
+            `OPENCLAW_STATE_DIR=${quoteCliArg(targetEnv.OPENCLAW_STATE_DIR)}`,
+          );
+          expect(result.hint).toContain(`OPENCLAW_CONFIG_PATH=${quoteCliArg(configPath)}`);
+          expect(result.hint).toContain(`OPENCLAW_WORKSPACE_DIR=${quoteCliArg(workspaceDir)}`);
+        }
+        await expect(fs.stat(result.contextPath!)).resolves.toMatchObject({
+          size: expect.any(Number),
+        });
+      }
+    },
+  );
 });

@@ -32,13 +32,14 @@ export type CustodianMessage = {
   step: WizardStep | null;
 };
 
-export function createCustodianAssistantMessage(
+export function createCustodianMessage(
   id: number,
+  role: CustodianMessage["role"],
   text: string,
-  question: CustodianStructuredQuestion | null,
-  step: WizardStep | null,
+  question: CustodianStructuredQuestion | null = null,
+  step: WizardStep | null = null,
 ): CustodianMessage {
-  return { id, role: "assistant", text, at: Date.now(), question, step };
+  return { id, role, text, at: Date.now(), question, step };
 }
 
 export function hasUnresolvedCustodianQuestion(

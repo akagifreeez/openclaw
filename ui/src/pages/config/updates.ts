@@ -11,7 +11,7 @@ import type {
 import {
   formatUpdateCampaignLabel,
   formatUpdateTargetLabel,
-} from "../../app/update-overlay-helpers.ts";
+} from "../../app/update-schedule-projection.ts";
 import { icons } from "../../components/icons.ts";
 import {
   renderSettingsPage,

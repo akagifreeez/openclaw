@@ -49,6 +49,13 @@ function isStoredUpdateNotice(notice: unknown, gateway: string): notice is Store
     return false;
   }
   return (
+    (notice.kind === "verified" ||
+      notice.record === undefined ||
+      (isRecord(notice.record) &&
+        (notice.record.id === null || typeof notice.record.id === "string") &&
+        (notice.record.timestampMs === null ||
+          (typeof notice.record.timestampMs === "number" &&
+            Number.isFinite(notice.record.timestampMs))))) &&
     (notice.kind === "verified"
       ? [notice.version, notice.sha]
       : [notice.expectedVersion, notice.expectedSha, notice.handoffId]
