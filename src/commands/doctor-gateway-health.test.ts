@@ -1,5 +1,5 @@
 // Doctor gateway health tests cover gateway probe failures, auth requirements, and repair messages.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayClientRequestError } from "../../packages/gateway-client/src/index.js";
 import { retainGatewayResponsePayload } from "../../packages/gateway-client/src/protocol-request.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -68,6 +68,55 @@ describe("checkGatewayHealth", () => {
     note.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    {
+      label: "reports",
+      gatewayStateDir: "/tmp/doctor-gateway-state",
+      gatewayConfigPath: "/tmp/doctor-gateway.json",
+      expected: true,
+    },
+    {
+      label: "does not report",
+      gatewayStateDir: "/tmp/doctor-cli-state",
+      gatewayConfigPath: "/tmp/doctor-cli.json",
+      expected: false,
+    },
+  ])(
+    "$label a live state-directory mismatch",
+    async ({ gatewayStateDir, gatewayConfigPath, expected }) => {
+      vi.stubEnv("OPENCLAW_STATE_DIR", "/tmp/doctor-cli-state");
+      vi.stubEnv("OPENCLAW_CONFIG_PATH", "/tmp/doctor-cli.json");
+      callGateway.mockImplementation(
+        async (options: {
+          method?: string;
+          onHelloOk?: (hello: { snapshot: { stateDir: string; configPath: string } }) => void;
+        }) => {
+          if (options.method === "status") {
+            options.onHelloOk?.({
+              snapshot: { stateDir: gatewayStateDir, configPath: gatewayConfigPath },
+            });
+          }
+          return {};
+        },
+      );
+      const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+
+      await checkGatewayHealth({ runtime: runtime as never, cfg: {} as OpenClawConfig });
+
+      const mismatchNotes = note.mock.calls.filter(
+        ([, title]) => title === "Gateway state directory mismatch",
+      );
+      expect(mismatchNotes).toHaveLength(expected ? 1 : 0);
+      if (expected) {
+        expect(mismatchNotes[0]?.[0]).toContain("CLI and live Gateway use different");
+      }
+    },
+  );
+
   it("uses a lightweight status RPC for the restart liveness gate", async () => {
     callGateway.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({});
     const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
@@ -76,12 +125,15 @@ describe("checkGatewayHealth", () => {
       checkGatewayHealth({ runtime: runtime as never, cfg, timeoutMs: 3000 }),
     ).resolves.toEqual({ authenticated: true, healthOk: true, status: { ok: true } });
 
-    expect(callGateway).toHaveBeenNthCalledWith(1, {
-      method: "status",
-      params: { includeChannelSummary: false },
-      timeoutMs: 3000,
-      config: cfg,
-    });
+    expect(callGateway).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        method: "status",
+        params: { includeChannelSummary: false },
+        timeoutMs: 3000,
+        config: cfg,
+      }),
+    );
     expect(callGateway).toHaveBeenNthCalledWith(2, {
       method: "channels.status",
       params: { probe: true, timeoutMs: 5000 },

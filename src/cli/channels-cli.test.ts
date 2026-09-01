@@ -17,6 +17,8 @@ const listRawChannelPluginCatalogEntriesMock = vi.hoisted(() =>
   vi.fn<() => ChannelPluginCatalogEntry[]>(() => []),
 );
 const channelsAddCommandMock = vi.hoisted(() => vi.fn(async () => undefined));
+const runChannelLoginMock = vi.hoisted(() => vi.fn(async () => undefined));
+const runChannelLogoutMock = vi.hoisted(() => vi.fn(async () => undefined));
 const channelsLogsCommandMock = vi.hoisted(() =>
   vi.fn(async (_options: { channel?: string }, _runtime: unknown) => undefined),
 );
@@ -39,6 +41,11 @@ vi.mock("../commands/channels.js", () => ({
   channelsAddCommand: channelsAddCommandMock,
   channelsLogsCommand: channelsLogsCommandMock,
   channelsResolveCommand: channelsResolveCommandMock,
+}));
+
+vi.mock("./channel-auth.js", () => ({
+  runChannelLogin: runChannelLoginMock,
+  runChannelLogout: runChannelLogoutMock,
 }));
 
 vi.mock("../runtime.js", () => ({
@@ -726,6 +733,40 @@ describe("registerChannelsCli", () => {
       expect.objectContaining({ allowStateDirMismatch: true }),
       runtimeMock,
       expect.objectContaining({ hasFlags: false }),
+    );
+  });
+
+  it.each([
+    {
+      label: "add before subcommand",
+      args: ["channels", "--allow-state-dir-mismatch", "add"],
+      command: channelsAddCommandMock,
+    },
+    {
+      label: "add after subcommand",
+      args: ["channels", "add", "--allow-state-dir-mismatch"],
+      command: channelsAddCommandMock,
+    },
+    {
+      label: "login before subcommand",
+      args: ["channels", "--allow-state-dir-mismatch", "login"],
+      command: runChannelLoginMock,
+    },
+    {
+      label: "login after subcommand",
+      args: ["channels", "login", "--allow-state-dir-mismatch"],
+      command: runChannelLoginMock,
+    },
+  ] as const)("passes the state-directory escape hatch from $label", async ({ args, command }) => {
+    const program = new Command().name("openclaw");
+    await registerChannelsCli(program, ["node", "openclaw", ...args]);
+    await program.parseAsync(args, { from: "user" });
+
+    expect(command).toHaveBeenCalledWith(
+      expect.objectContaining({ allowStateDirMismatch: true }),
+      ...(command === channelsAddCommandMock
+        ? [runtimeMock, expect.objectContaining({ hasFlags: false })]
+        : [runtimeMock]),
     );
   });
 

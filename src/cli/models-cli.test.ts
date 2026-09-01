@@ -559,6 +559,51 @@ describe("models cli", () => {
     expectCommandOptions(modelsAuthLoginCommand, { allowStateDirMismatch: true });
   });
 
+  it.each([
+    {
+      label: "add",
+      leaf: ["add"],
+      command: modelsAuthAddCommand,
+    },
+    {
+      label: "login",
+      leaf: ["login", "--provider", "openai"],
+      command: modelsAuthLoginCommand,
+    },
+    {
+      label: "setup-token",
+      leaf: ["setup-token", "--provider", "anthropic"],
+      command: modelsAuthSetupTokenCommand,
+    },
+    {
+      label: "paste-token",
+      leaf: ["paste-token", "--provider", "anthropic"],
+      command: modelsAuthPasteTokenCommand,
+    },
+    {
+      label: "paste-api-key",
+      leaf: ["paste-api-key", "--provider", "openai"],
+      command: modelsAuthPasteApiKeyCommand,
+    },
+    {
+      label: "login-github-copilot",
+      leaf: ["login-github-copilot"],
+      command: modelsAuthLoginCommand,
+    },
+  ] as const)(
+    "passes the parent and leaf state-directory escape hatch to $label",
+    async ({ leaf, command }) => {
+      for (const args of [
+        ["models", "auth", "--allow-state-dir-mismatch", ...leaf],
+        ["models", "auth", ...leaf, "--allow-state-dir-mismatch"],
+      ]) {
+        await runModelsCommand(args);
+        expectCommandOptions(command, { allowStateDirMismatch: true });
+        command.mockClear();
+      }
+    },
+  );
+
   it("maps --device-code to the provider device-code auth method", async () => {
     await runModelsCommand(["models", "auth", "login", "--provider", "openai", "--device-code"]);
 

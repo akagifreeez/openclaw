@@ -28,7 +28,7 @@ function canonicalizeStatePath(value: string): string {
   }
 }
 
-function compareGatewayStateDirs(params: {
+export function compareCliGatewayStateDirs(params: {
   cliStateDir: string;
   cliConfigPath: string;
   gatewayStateDir?: string;
@@ -39,20 +39,21 @@ function compareGatewayStateDirs(params: {
   warn?: (message: string) => void;
   gatewayStateDirSource?: "configured service target";
 }) {
+  const cliStateDir = canonicalizeStatePath(params.cliStateDir);
+  const cliConfigPath = canonicalizeStatePath(params.cliConfigPath);
   if (!params.gatewayStateDir) {
-    return { kind: "unavailable" as const, cliStateDir: params.cliStateDir };
+    return { kind: "unavailable" as const, cliStateDir };
   }
   const gatewayStateDir = canonicalizeStatePath(params.gatewayStateDir);
   const gatewayConfigPath = params.gatewayConfigPath
     ? canonicalizeStatePath(params.gatewayConfigPath)
     : undefined;
-  const stateDirMismatch = gatewayStateDir !== params.cliStateDir;
-  const configPathMismatch =
-    gatewayConfigPath !== undefined && gatewayConfigPath !== params.cliConfigPath;
+  const stateDirMismatch = gatewayStateDir !== cliStateDir;
+  const configPathMismatch = gatewayConfigPath !== undefined && gatewayConfigPath !== cliConfigPath;
   const comparisonKind = stateDirMismatch || configPathMismatch ? "mismatch" : "match";
   const result = {
     kind: params.gatewayStateDirSource ? "unavailable" : comparisonKind,
-    cliStateDir: params.cliStateDir,
+    cliStateDir,
     gatewayStateDir,
     ...(params.gatewayStateDirSource
       ? { gatewayStateDirSource: params.gatewayStateDirSource }
@@ -106,7 +107,7 @@ async function serviceFallback(
     return { kind: "unavailable" as const, cliStateDir };
   }
 
-  return compareGatewayStateDirs({
+  return compareCliGatewayStateDirs({
     cliStateDir,
     cliConfigPath,
     gatewayStateDir: resolveStateDir(state.env),
@@ -183,7 +184,7 @@ export async function checkCliGatewayStateDir(params: {
       warn: params.warn,
     });
   }
-  return compareGatewayStateDirs({
+  return compareCliGatewayStateDirs({
     cliStateDir,
     cliConfigPath,
     gatewayStateDir,

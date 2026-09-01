@@ -18,6 +18,7 @@ import {
 } from "./channels-cli-add-args.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
 import {
+  allowStateDirMismatch,
   hasExplicitOptions,
   inheritOptionFromParent,
   STATE_DIR_MISMATCH_OPTION,
@@ -162,6 +163,7 @@ export async function registerChannelsCli(
     .command("channels")
     .description("Manage connected chat channels and accounts")
     .option("--agent <id>", "Agent owner for channel commands that require workspace context")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .addHelpText(
       "after",
       () =>
@@ -353,7 +355,10 @@ export async function registerChannelsCli(
       await channelsAddCommand(
         resolveChannelsAddOptions(
           channelArg,
-          opts,
+          {
+            ...opts,
+            allowStateDirMismatch: allowStateDirMismatch(command, opts.allowStateDirMismatch),
+          },
           channelSetupOptionMode === "modern" ? command : undefined,
         ),
         defaultRuntime,
@@ -383,14 +388,14 @@ export async function registerChannelsCli(
     .option("--account <id>", "Account id (accountId)")
     .option("--verbose", "Verbose connection logs", false)
     .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION);
-  loginCommand.action(async (opts) => {
+  loginCommand.action(async (opts, command) => {
     await runChannelsCommandWithDanger(async () => {
       await runChannelLogin(
         {
           channel: opts.channel as string | undefined,
           account: opts.account as string | undefined,
           verbose: Boolean(opts.verbose),
-          allowStateDirMismatch: Boolean(opts.allowStateDirMismatch),
+          allowStateDirMismatch: allowStateDirMismatch(command, opts.allowStateDirMismatch),
         },
         defaultRuntime,
       );

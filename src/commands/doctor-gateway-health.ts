@@ -3,6 +3,8 @@ import { note } from "../../packages/terminal-core/src/note.js";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { probeGatewayStatus } from "../cli/daemon-cli/probe.js";
+import { compareCliGatewayStateDirs } from "../cli/state-dir-gateway-check.js";
+import { resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   buildGatewayConnectionDetails,
@@ -10,6 +12,7 @@ import {
   callGateway,
   isGatewayCredentialsRequiredError,
 } from "../gateway/call.js";
+import type { GatewayClientOptions } from "../gateway/client.js";
 import { isGatewaySecretRefUnavailableError } from "../gateway/credentials.js";
 import type {
   DoctorMemoryEmbeddingRuntimePayload,
@@ -46,6 +49,8 @@ type GatewayMemoryProbe = {
    */
   skipped: boolean;
 };
+
+type GatewayHello = Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0];
 
 function isGatewayCallTimeout(message: string): boolean {
   return /^gateway timeout after \d+ms(?:\n|$)/.test(message);
@@ -85,14 +90,28 @@ export async function checkGatewayHealth(params: {
     typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : 10_000;
   let healthOk = false;
   let status: StatusSummary | undefined;
+  let gatewayStateDir: string | undefined;
+  let gatewayConfigPath: string | undefined;
   try {
     status = await callGateway<StatusSummary>({
       method: "status",
       params: { includeChannelSummary: false },
       timeoutMs,
       config: params.cfg,
+      onHelloOk: (hello: GatewayHello) => {
+        gatewayStateDir = hello.snapshot.stateDir;
+        gatewayConfigPath = hello.snapshot.configPath;
+      },
     });
     healthOk = true;
+    compareCliGatewayStateDirs({
+      cliStateDir: resolveStateDir(process.env),
+      cliConfigPath: resolveConfigPath(process.env),
+      gatewayStateDir,
+      gatewayConfigPath,
+      gatewayReachable: true,
+      warn: (message) => note(message, "Gateway state directory mismatch"),
+    });
     noteCliGatewayVersionSkew(status);
     const secretDegradations = projectDoctorSecretRuntimeDegradations(status);
     if (secretDegradations.length > 0) {
