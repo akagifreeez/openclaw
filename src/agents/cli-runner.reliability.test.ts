@@ -2497,28 +2497,62 @@ describe("runCliAgent reliability", () => {
     expect(result.meta.agentMeta?.contextTokens).toBe(150_000);
   });
 
-  it("marks CLI runs as paused after sessions_yield", async () => {
+  it("returns accepted CLI session spawns when sessions_yield pauses the requester", async () => {
+    const requesterTurnRunId = "run-cli-yield";
+    const childRunId = "run-cli-child";
+    const childSessionKey = "agent:main:subagent:cli-child";
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
       const input = args[0] as Parameters<ReturnType<typeof getProcessSupervisor>["spawn"]>[0];
+      const spawnCapture = markMcpLoopbackToolCallStarted({
+        captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY,
+        toolName: "sessions_spawn",
+        args: { task: "review" },
+      });
+      if (!spawnCapture) {
+        throw new Error("missing sessions_spawn capture");
+      }
+      recordMcpLoopbackToolCallResult({
+        captureHandle: spawnCapture,
+        toolName: "sessions_spawn",
+        args: { task: "review" },
+        outcome: "completed",
+        result: {
+          details: {
+            status: "accepted",
+            runId: childRunId,
+            childSessionKey,
+            expectsCompletionMessage: true,
+          },
+        },
+      });
+      markMcpLoopbackToolCallFinished(spawnCapture);
       const captureHandle = markMcpLoopbackRequestStarted(input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY);
       await resolveMcpLoopbackYieldContext(captureHandle)?.onYield("waiting on subagents");
       markMcpLoopbackRequestFinished(captureHandle);
       input.onStdout?.("yield acknowledged");
       return makeManagedRun();
     });
-    const context = buildPreparedContext();
+    const context = buildPreparedContext({
+      sessionKey: "agent:main:main",
+      runId: requesterTurnRunId,
+    });
     context.mcpDeliveryCapture = true;
 
     const result = await runPreparedCliAgent(context);
 
-    expect(result.meta).toMatchObject({
-      yielded: true,
-      livenessState: "paused",
-      stopReason: "end_turn",
-      completion: {
-        finishReason: "end_turn",
+    expect(result).toMatchObject({
+      acceptedSessionSpawns: [
+        { runId: childRunId, childSessionKey, expectsCompletionMessage: true },
+      ],
+      meta: {
+        yielded: true,
+        livenessState: "paused",
         stopReason: "end_turn",
-        refusal: false,
+        completion: {
+          finishReason: "end_turn",
+          stopReason: "end_turn",
+          refusal: false,
+        },
       },
     });
   });
