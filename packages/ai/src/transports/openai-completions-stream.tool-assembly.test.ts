@@ -152,7 +152,9 @@ describe("openai completions stream", () => {
     expect(output.content[0]).toEqual({
       type: "text",
       text: "Use <",
-      textSignature: expect.stringMatching(/^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u),
+      textSignature: expect.stringMatching(
+        /^\{"v":1,"id":"commentary-0-[0-9a-f]{12}","phase":"commentary"\}$/u,
+      ),
     });
     expectRecordFields(output.content[1], {
       type: "toolCall",
