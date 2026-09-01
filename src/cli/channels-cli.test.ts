@@ -720,12 +720,12 @@ describe("registerChannelsCli", () => {
   });
 
   it("passes the state-directory escape hatch to channel add", async () => {
-    await runChannelsAddCli(["channels", "add", "--allow-state-dir-mismatch", "telegram"]);
+    await runChannelsAddCli(["channels", "add", "--allow-state-dir-mismatch"]);
 
     expect(channelsAddCommandMock).toHaveBeenCalledWith(
       expect.objectContaining({ allowStateDirMismatch: true }),
       runtimeMock,
-      expect.objectContaining({}),
+      expect.objectContaining({ hasFlags: false }),
     );
   });
 

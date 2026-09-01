@@ -2,17 +2,11 @@
 import type { Command } from "commander";
 import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { theme } from "../../packages/terminal-core/src/theme.js";
-import { inheritOptionFromParent, STATE_DIR_MISMATCH_OPTION } from "./command-options.js";
+import { allowStateDirMismatch, STATE_DIR_MISMATCH_OPTION } from "./command-options.js";
 import { isModelsStatusJsonOutput } from "./models-output-mode.js";
 import { setCommandJsonMode } from "./program/json-mode.js";
 
 type ModelsCliRuntime = typeof import("./models-cli.runtime.js");
-
-function allowStateDirMismatch(command: Command, value?: boolean): boolean {
-  return (
-    Boolean(value) || Boolean(inheritOptionFromParent(command, "allowStateDirMismatch", "cli"))
-  );
-}
 
 function createModuleLoader<T>(load: () => Promise<T>): () => Promise<T> {
   // Model subcommands are heavy; load each implementation once on first use.
@@ -510,6 +504,7 @@ export function registerModelsCli(program: Command) {
     .description("Login to GitHub Copilot via GitHub device flow (TTY required)")
     .option("--agent <id>", "Agent id (default: configured default agent)")
     .option("--yes", "Overwrite existing profile without prompting", false)
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .action(async (opts, command) => {
       await withModelsRuntime(async ({ defaultRuntime, resolveModelAgentOption }) => {
         const agent = resolveModelAgentOption(command);
@@ -519,6 +514,7 @@ export function registerModelsCli(program: Command) {
             provider: "github-copilot",
             method: "device",
             yes: Boolean(opts.yes),
+            allowStateDirMismatch: allowStateDirMismatch(command, opts.allowStateDirMismatch),
             agent,
           },
           defaultRuntime,

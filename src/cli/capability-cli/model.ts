@@ -36,6 +36,7 @@ import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-el
 import { defaultRuntime } from "../../runtime.js";
 import { getProviderEnvVars } from "../../secrets/provider-env-vars.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
+import { allowStateDirMismatch, STATE_DIR_MISMATCH_OPTION } from "../command-options.js";
 import { getModelsCommandSecretTargetIds } from "../command-secret-targets.js";
 import { collectOption } from "../program/helpers.js";
 import type { CapabilityEnvelope, CapabilityTransport } from "./metadata.js";
@@ -538,6 +539,7 @@ export function registerModelCapabilityCommands(capability: Command): void {
     .command("auth")
     .description("Provider auth helpers")
     .option("--agent <id>", "Agent id (default: configured default agent)");
+  modelAuth.option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION);
 
   const resolveModelAuthAgent = (command: Command, rawAgentId: unknown, surface: string) =>
     resolveCapabilityProviderAgentId(
@@ -552,6 +554,7 @@ export function registerModelCapabilityCommands(capability: Command): void {
     .requiredOption("--provider <id>", "Provider id")
     .option("--method <id>", "Provider auth method id")
     .option("--agent <id>", "Agent id (default: configured default agent)")
+    .option("--allow-state-dir-mismatch", STATE_DIR_MISMATCH_OPTION)
     .action(async (opts, command) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
         const agent = resolveModelAuthAgent(command, opts.agent, "infer model auth login");
@@ -560,6 +563,7 @@ export function registerModelCapabilityCommands(capability: Command): void {
           {
             provider: String(opts.provider),
             method: opts.method ? String(opts.method) : undefined,
+            allowStateDirMismatch: allowStateDirMismatch(command, opts.allowStateDirMismatch),
             agent,
           },
           defaultRuntime,

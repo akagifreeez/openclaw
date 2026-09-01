@@ -3970,6 +3970,40 @@ describe("capability cli", () => {
     },
   );
 
+  it.each([
+    {
+      label: "parent",
+      args: [
+        "infer",
+        "model",
+        "auth",
+        "--allow-state-dir-mismatch",
+        "login",
+        "--provider",
+        "openai",
+      ],
+    },
+    {
+      label: "leaf",
+      args: [
+        "infer",
+        "model",
+        "auth",
+        "login",
+        "--provider",
+        "openai",
+        "--allow-state-dir-mismatch",
+      ],
+    },
+  ] as const)("forwards the state-directory escape hatch from the $label", async ({ args }) => {
+    await runCap(...args);
+
+    expect(mocks.modelsAuthLoginCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ allowStateDirMismatch: true }),
+      mocks.runtime,
+    );
+  });
+
   it.each(["parent", "leaf"] as const)(
     "routes %s --agent through model auth status",
     async (position) => {

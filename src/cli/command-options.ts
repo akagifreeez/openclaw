@@ -4,6 +4,12 @@ import type { Command, OptionValueSource } from "commander";
 export const STATE_DIR_MISMATCH_OPTION =
   "Waive state-dir/config-path mismatch; Gateway will not read these writes";
 
+export function allowStateDirMismatch(command: Command, value?: boolean): boolean {
+  return (
+    Boolean(value) || Boolean(inheritOptionFromParent(command, "allowStateDirMismatch", "cli"))
+  );
+}
+
 export function hasExplicitOptions(command: Command, names: readonly string[]): boolean {
   return names.some((name) => command.getOptionValueSource(name) === "cli");
 }

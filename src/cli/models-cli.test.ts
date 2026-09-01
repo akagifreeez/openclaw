@@ -537,9 +537,23 @@ describe("models cli", () => {
   });
 
   it.each([
-    ["parent", ["models", "auth", "--allow-state-dir-mismatch", "login"]],
-    ["leaf", ["models", "auth", "login", "--allow-state-dir-mismatch"]],
-  ] as const)("passes the state-directory escape hatch from the %s", async (_label, args) => {
+    {
+      label: "login parent",
+      args: ["models", "auth", "--allow-state-dir-mismatch", "login"],
+    },
+    {
+      label: "login leaf",
+      args: ["models", "auth", "login", "--allow-state-dir-mismatch"],
+    },
+    {
+      label: "GitHub Copilot login parent",
+      args: ["models", "auth", "--allow-state-dir-mismatch", "login-github-copilot"],
+    },
+    {
+      label: "GitHub Copilot login leaf",
+      args: ["models", "auth", "login-github-copilot", "--allow-state-dir-mismatch"],
+    },
+  ] as const)("passes the state-directory escape hatch from the $label", async ({ args }) => {
     await runModelsCommand([...args]);
 
     expectCommandOptions(modelsAuthLoginCommand, { allowStateDirMismatch: true });
