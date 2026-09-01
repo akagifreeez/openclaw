@@ -1785,13 +1785,14 @@ describe("RealtimeCallHandler path routing", () => {
       { label: "returned timeout", result: { text: "The run timed out.", timedOut: true } },
     ];
     it.each(
-      outcomes.flatMap((outcome) => [
-        { ...outcome, synchronous: false },
-        ...(path === "general" && "error" in outcome
-          ? [{ ...outcome, synchronous: true, label: `synchronous ${outcome.label}` }]
-          : []),
-      ]),
-    )("projects $label once per provider call while the phone stays open", async (outcome) => {
+      outcomes.flatMap((outcome) => {
+        const asynchronous = { outcome, synchronous: false, label: outcome.label };
+        return path === "general" && "error" in outcome
+          ? [asynchronous, { outcome, synchronous: true, label: `synchronous ${outcome.label}` }]
+          : [asynchronous];
+      }),
+    )("projects $label once per provider call while the phone stays open", async (testCase) => {
+      const { outcome, synchronous } = testCase;
       let callbacks: RealtimeBridgeRequest | undefined;
       const submitToolResult = vi.fn();
       const sendUserMessage = vi.fn();
@@ -1815,7 +1816,7 @@ describe("RealtimeCallHandler path routing", () => {
       );
       const pending = createDeferred<unknown>();
       const hostTool = vi.fn((_args: unknown, _callId: string, _context: ToolHandlerContext) => {
-        if (outcome.synchronous && "error" in outcome) {
+        if (synchronous && "error" in outcome) {
           throw outcome.error;
         }
         return pending.promise;
@@ -1853,7 +1854,7 @@ describe("RealtimeCallHandler path routing", () => {
           path === "general" ? undefined : false,
         );
 
-        if ("error" in outcome && !outcome.synchronous) {
+        if ("error" in outcome && !synchronous) {
           pending.reject(outcome.error);
         } else {
           pending.resolve(outcome.result);
