@@ -93,6 +93,7 @@ export function materializeLegacyDefaultAgentRoles(
   options: {
     ambientChannelIds?: readonly string[];
     env?: NodeJS.ProcessEnv;
+    homedir?: () => string;
     materializeSessionStore?: boolean;
     materializeWorkspace?: boolean;
   } = {},

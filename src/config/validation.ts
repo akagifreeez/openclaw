@@ -175,7 +175,11 @@ export function materializeLegacyAgentOwnershipForActiveChannelsResult(
   legacyDefaultAgentId: string,
   env?: NodeJS.ProcessEnv,
   manifestRecords?: PluginManifestRegistry["plugins"],
-  options?: { materializeSessionStore?: boolean; materializeWorkspace?: boolean },
+  options?: {
+    materializeSessionStore?: boolean;
+    materializeWorkspace?: boolean;
+    homedir?: () => string;
+  },
 ): ReturnType<typeof materializeLegacyDefaultAgentRoles> {
   const ambientChannelIds = listChannelIdsForOwnershipMigration({
     config,
@@ -185,6 +189,7 @@ export function materializeLegacyAgentOwnershipForActiveChannelsResult(
   const materialized = materializeLegacyDefaultAgentRoles(config, legacyDefaultAgentId, {
     ambientChannelIds,
     env,
+    homedir: options?.homedir,
     materializeSessionStore: options?.materializeSessionStore,
     materializeWorkspace: options?.materializeWorkspace,
   });

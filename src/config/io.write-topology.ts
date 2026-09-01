@@ -24,13 +24,14 @@ export function prepareConfigWriteTopology(
     options: Pick<ConfigWriteOptions, "explicitSetPaths" | "explicitSetValueSource">;
     unsetPaths: readonly (readonly string[])[];
     env: NodeJS.ProcessEnv;
+    homedir?: () => string;
   },
 ) {
-  const { snapshot, options, unsetPaths, env, pluginMetadataSnapshot } = params;
+  const { snapshot, options, unsetPaths, env, homedir, pluginMetadataSnapshot } = params;
   let nextConfig = params.nextConfig;
   const sourceRosterMigration = migratePersistedImplicitMainRoster(
     snapshot.sourceConfigBeforeMigrations ?? snapshot.parsed,
-    { env },
+    { env, homedir },
   );
   const retainedLegacyDefaultAgentId = sourceRosterMigration.retainedLegacyDefaultAgentId;
   const previousEntries = listAgentEntries(snapshot.config);
@@ -60,7 +61,8 @@ export function prepareConfigWriteTopology(
     if (nextEntries.some((entry) => entry.default === true)) {
       // This writer owns role transitions; retire only the submitted roster marker.
       nextConfig = coerceConfig(
-        migratePersistedImplicitMainRoster(nextConfig, { materializeRoles: false, env }).config,
+        migratePersistedImplicitMainRoster(nextConfig, { materializeRoles: false, env, homedir })
+          .config,
       );
     }
     nextConfig = {
@@ -106,7 +108,7 @@ export function prepareConfigWriteTopology(
         ownerAgentId,
         env,
         pluginMetadataSnapshot?.manifestRegistry.plugins,
-        { materializeSessionStore: sameFixedSessionStore, materializeWorkspace: true },
+        { materializeSessionStore: sameFixedSessionStore, materializeWorkspace: true, homedir },
       )
     : { config: nextConfig, insertedPaths: [] };
   nextConfig = ownershipMaterialization.config;

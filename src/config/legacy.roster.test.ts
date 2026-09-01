@@ -262,17 +262,25 @@ describe("persisted implicit-main roster migration", () => {
     });
   });
 
-  it.each(["env", "homedir"])(
-    "uses the config reader's %s when pinning a legacy workspace",
-    async (source) => {
+  it.each([
+    ["env", false],
+    ["homedir", false],
+    ["env", true],
+    ["homedir", true],
+  ] as const)(
+    "uses config IO's %s when reading and persisting a legacy workspace (marked: %s)",
+    async (source, marked) => {
       await withTempHome(async (home) => {
         const selectedHome = path.join(home, "selected-home");
         const configPath = path.join(selectedHome, ".openclaw", "openclaw.json");
         await fs.mkdir(path.dirname(configPath), { recursive: true });
-        await fs.writeFile(
-          configPath,
-          JSON.stringify({ agents: { list: [{ id: "first" }, { id: "other" }] } }),
-        );
+        const raw = {
+          agents: {
+            list: [{ id: "first", ...(marked ? { default: true } : {}) }, { id: "other" }],
+          },
+          plugins: { enabled: false },
+        };
+        await fs.writeFile(configPath, JSON.stringify(raw));
         const io = createConfigIO({
           configPath,
           env: source === "env" ? { HOME: selectedHome } : {},
@@ -281,13 +289,32 @@ describe("persisted implicit-main roster migration", () => {
           pluginValidation: "core-only",
         });
         const snapshot = await io.readConfigFileSnapshot();
-        expect(snapshot.valid).toBe(false);
+        const workspace = path.join(selectedHome, ".openclaw", "workspace");
         expect(snapshot.sourceConfig.agents?.entries?.first?.workspace).toBe(
-          path.join(selectedHome, ".openclaw", "workspace"),
+          marked ? undefined : workspace,
         );
-        expect(JSON.parse(await fs.readFile(configPath, "utf8"))).toEqual({
-          agents: { list: [{ id: "first" }, { id: "other" }] },
+        expect(JSON.parse(await fs.readFile(configPath, "utf8"))).toEqual(raw);
+        const next = structuredClone(snapshot.sourceConfig);
+        next.agents = {
+          ...next.agents,
+          ownership: "explicit",
+          entries: {
+            ...next.agents?.entries,
+            first: { ...next.agents?.entries?.first, name: "first-updated" },
+          },
+        };
+        await io.writeConfigFile(next, {
+          skipPluginValidation: true,
+          explicitSetPaths: [
+            ["agents", "entries"],
+            ["agents", "ownership"],
+          ],
         });
+        const saved = JSON.parse(await fs.readFile(configPath, "utf8"));
+        expect(saved.agents.entries.first.workspace).toBe(workspace);
+        expect(
+          (await io.readConfigFileSnapshot()).sourceConfig.agents?.entries?.first?.workspace,
+        ).toBe(workspace);
       });
     },
   );
