@@ -330,6 +330,15 @@ data class SessionGitHubPublicationFailed(
   val nextAction: String,
 ) : SessionGitHubPublicationResult
 
+@SerialName("needs_confirmation")
+@Serializable
+data class SessionGitHubPublicationNeedsConfirmation(
+  val requestId: String,
+  val publisher: SessionGitHubPublicationNeedsConfirmationPublisher? = null,
+  val effect: SessionGitHubPublicationNeedsConfirmationEffect? = null,
+  val message: String,
+) : SessionGitHubPublicationResult
+
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 @JsonClassDiscriminator("status")
@@ -446,6 +455,21 @@ data class SessionGitHubPublicationFailedPublisher(
 
 @Serializable
 data class SessionGitHubPublicationFailedEffect(
+  val kind: String,
+  val status: String,
+  val headCommit: String? = null,
+  val url: String? = null,
+)
+
+@Serializable
+data class SessionGitHubPublicationNeedsConfirmationPublisher(
+  val source: String,
+  val accountId: Long,
+  val login: String,
+)
+
+@Serializable
+data class SessionGitHubPublicationNeedsConfirmationEffect(
   val kind: String,
   val status: String,
   val headCommit: String? = null,
