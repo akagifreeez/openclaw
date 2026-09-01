@@ -6,6 +6,7 @@ import { readGatewayServiceState, resolveGatewayService } from "../daemon/servic
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
 import type { GatewayClientOptions } from "../gateway/client.js";
 import { ADMIN_SCOPE } from "../gateway/method-scopes.js";
+import { clampProbeTimeoutMs, probeGateway } from "../gateway/probe.js";
 
 type GatewayHello = Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0];
 
@@ -27,48 +28,95 @@ function canonicalizeStatePath(value: string): string {
   }
 }
 
+function compareGatewayStateDirs(params: {
+  cliStateDir: string;
+  cliConfigPath: string;
+  gatewayStateDir?: string;
+  gatewayConfigPath?: string;
+  gatewayReachable: boolean;
+  command?: string;
+  allowMismatch?: boolean;
+  warn?: (message: string) => void;
+  gatewayStateDirSource?: "configured service target";
+}) {
+  if (!params.gatewayStateDir) {
+    return { kind: "unavailable" as const, cliStateDir: params.cliStateDir };
+  }
+  const gatewayStateDir = canonicalizeStatePath(params.gatewayStateDir);
+  const gatewayConfigPath = params.gatewayConfigPath
+    ? canonicalizeStatePath(params.gatewayConfigPath)
+    : undefined;
+  const stateDirMismatch = gatewayStateDir !== params.cliStateDir;
+  const configPathMismatch =
+    gatewayConfigPath !== undefined && gatewayConfigPath !== params.cliConfigPath;
+  const comparisonKind = stateDirMismatch || configPathMismatch ? "mismatch" : "match";
+  const result = {
+    kind: params.gatewayStateDirSource ? "unavailable" : comparisonKind,
+    cliStateDir: params.cliStateDir,
+    gatewayStateDir,
+    ...(params.gatewayStateDirSource
+      ? { gatewayStateDirSource: params.gatewayStateDirSource }
+      : {}),
+  };
+  if (comparisonKind !== "mismatch") {
+    return result;
+  }
+
+  const differences = [
+    stateDirMismatch &&
+      `state directories (CLI: ${params.cliStateDir}; Gateway: ${result.gatewayStateDir})`,
+    configPathMismatch &&
+      `config paths (CLI: ${params.cliConfigPath}; Gateway: ${gatewayConfigPath})`,
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  const gatewayConfig = gatewayConfigPath ?? path.join(result.gatewayStateDir, "openclaw.json");
+  if (params.gatewayReachable && params.command && !params.allowMismatch) {
+    throw new Error(
+      `No credentials were written. ${differences}. Fix: rerun with OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} ${params.command}, or pass --allow-state-dir-mismatch to write here anyway.`,
+    );
+  }
+  params.warn?.(
+    params.gatewayReachable
+      ? `CLI and live Gateway use different ${differences}. The CLI may read or write a store or config file the Gateway does not use. Fix: run OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} openclaw doctor, then rerun openclaw gateway status --deep.`
+      : `Gateway is unavailable. CLI and the configured service target use different ${differences}; this is not live proof.`,
+  );
+  return result;
+}
+
 async function serviceFallback(
   cliStateDir: string,
   cliConfigPath: string,
-  warn?: (message: string) => void,
+  params: {
+    gatewayReachable: boolean;
+    command?: string;
+    allowMismatch?: boolean;
+    warn?: (message: string) => void;
+  },
 ) {
   const state = await readGatewayServiceState(resolveGatewayService(), { env: process.env }).catch(
     () => null,
   );
-  const gatewayStateDir = state?.installed
-    ? canonicalizeStatePath(resolveStateDir(state.env))
-    : undefined;
-  const gatewayConfigPath = state?.installed
-    ? canonicalizeStatePath(resolveConfigPath(state.env))
-    : undefined;
-  // Config paths are compared separately from state dirs: a shared state dir with a different
-  // config file still leaves the Gateway reading configuration this write never touches. The
-  // configured target is not live proof, so divergence warns instead of refusing the write.
-  const differences = [
-    gatewayStateDir &&
-      gatewayStateDir !== cliStateDir &&
-      `state directories (CLI: ${cliStateDir}; Gateway: ${gatewayStateDir})`,
-    gatewayConfigPath &&
-      gatewayConfigPath !== cliConfigPath &&
-      `config paths (CLI: ${cliConfigPath}; Gateway: ${gatewayConfigPath})`,
-  ]
-    .filter(Boolean)
-    .join(" and ");
-  if (differences) {
-    warn?.(
-      `Gateway is unavailable. CLI and the configured service target use different ${differences}; this is not live proof.`,
-    );
+  if (!state?.installed) {
+    if (params.gatewayReachable) {
+      params.warn?.(
+        "Gateway is listening, but no installed service state exists; state directory comparison was not possible.",
+      );
+    }
+    return { kind: "unavailable" as const, cliStateDir };
   }
-  return {
-    kind: "unavailable" as const,
+
+  return compareGatewayStateDirs({
     cliStateDir,
-    ...(gatewayStateDir
-      ? {
-          gatewayStateDir,
-          gatewayStateDirSource: "configured service target" as const,
-        }
-      : {}),
-  };
+    cliConfigPath,
+    gatewayStateDir: resolveStateDir(state.env),
+    gatewayConfigPath: resolveConfigPath(state.env),
+    gatewayReachable: params.gatewayReachable,
+    command: params.command,
+    allowMismatch: params.allowMismatch,
+    warn: params.warn,
+    gatewayStateDirSource: "configured service target",
+  });
 }
 
 export async function checkCliGatewayStateDir(params: {
@@ -102,7 +150,12 @@ export async function checkCliGatewayStateDir(params: {
   let gatewayStateDir = params.gatewayStateDir;
   let gatewayConfigPath: string | undefined;
   if (params.gatewayStatus === "failure") {
-    return await serviceFallback(cliStateDir, cliConfigPath, params.warn);
+    return await serviceFallback(cliStateDir, cliConfigPath, {
+      gatewayReachable: false,
+      command: params.command,
+      allowMismatch: params.allowMismatch,
+      warn: params.warn,
+    });
   }
   if (params.gatewayStatus === undefined) {
     try {
@@ -119,37 +172,35 @@ export async function checkCliGatewayStateDir(params: {
         },
       });
     } catch {
-      return await serviceFallback(cliStateDir, cliConfigPath, params.warn);
+      let gatewayReachable = false;
+      try {
+        // Credential preflight can fail before opening a socket. Probe without stored auth so only
+        // a Gateway protocol response can upgrade the fallback from offline to reachable.
+        const probe = await probeGateway({
+          url: details.url,
+          config: params.config,
+          timeoutMs: clampProbeTimeoutMs(params.timeoutMs ?? 10_000),
+          includeDetails: false,
+          suppressStoredDeviceAuth: true,
+        });
+        gatewayReachable = probe.gatewayReached === true;
+      } catch {}
+      return await serviceFallback(cliStateDir, cliConfigPath, {
+        gatewayReachable,
+        command: params.command,
+        allowMismatch: params.allowMismatch,
+        warn: params.warn,
+      });
     }
   }
-  if (!gatewayStateDir) {
-    return { kind: "unavailable", cliStateDir };
-  }
-  const liveStateDir = canonicalizeStatePath(gatewayStateDir);
-  const liveConfigPath = gatewayConfigPath ? canonicalizeStatePath(gatewayConfigPath) : undefined;
-  const stateDirMismatch = liveStateDir !== cliStateDir;
-  const configPathMismatch = liveConfigPath !== undefined && liveConfigPath !== cliConfigPath;
-  const result = {
-    kind: stateDirMismatch || configPathMismatch ? "mismatch" : "match",
+  return compareGatewayStateDirs({
     cliStateDir,
-    gatewayStateDir: liveStateDir,
-  };
-  if (result.kind === "mismatch") {
-    const differences = [
-      stateDirMismatch &&
-        `state directories (CLI: ${cliStateDir}; Gateway: ${result.gatewayStateDir})`,
-      configPathMismatch && `config paths (CLI: ${cliConfigPath}; Gateway: ${liveConfigPath})`,
-    ]
-      .filter(Boolean)
-      .join(" and ");
-    const gatewayConfig = liveConfigPath ?? path.join(result.gatewayStateDir, "openclaw.json");
-    const message = `CLI and live Gateway use different ${differences}. The CLI may read or write a store or config file the Gateway does not use. Fix: run OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} openclaw doctor, then rerun openclaw gateway status --deep.`;
-    if (params.command && !params.allowMismatch) {
-      throw new Error(
-        `No credentials were written. ${differences}. Fix: rerun with OPENCLAW_STATE_DIR=${result.gatewayStateDir} OPENCLAW_CONFIG_PATH=${gatewayConfig} ${params.command}, or pass --allow-state-dir-mismatch to write here anyway.`,
-      );
-    }
-    params.warn?.(message);
-  }
-  return result;
+    cliConfigPath,
+    gatewayStateDir,
+    gatewayConfigPath,
+    gatewayReachable: true,
+    command: params.command,
+    allowMismatch: params.allowMismatch,
+    warn: params.warn,
+  });
 }
