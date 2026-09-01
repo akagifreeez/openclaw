@@ -197,15 +197,15 @@ export function emitAssistantCommentaryStreamData(
     // Generic commentary must carry the identity the phase tagger generated so
     // the Control UI can key the live row to the persisted fallback row; without
     // it every generic segment is unkeyed and survives as a duplicate.
-    const genericItemId = isResponsesCommentary
-      ? undefined
+    const commentaryItemId = isResponsesCommentary
+      ? itemId
       : resolveAssistantStreamItemId({ message });
     ctx.emitAssistantStreamData(
       buildAssistantStreamData({
         text,
         replace: true,
         phase: "commentary",
-        itemId: isResponsesCommentary ? itemId : genericItemId,
+        itemId: commentaryItemId,
       }),
     );
   }
