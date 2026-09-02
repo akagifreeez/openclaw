@@ -51,14 +51,19 @@ type ScheduledTaskInfo = {
 function parseSchtasksQuery(output: string): ScheduledTaskInfo {
   const entries = parseKeyValueOutput(output, ":");
   const info: ScheduledTaskInfo = {};
-  if (entries.status) {
-    info.status = entries.status;
+  const status = entries.status ?? entries["状態"];
+  if (status) {
+    info.status = status;
   }
-  if (entries["last run time"]) {
-    info.lastRunTime = entries["last run time"];
+  const lastRunTime = entries["last run time"] ?? entries["前回の実行時刻"];
+  if (lastRunTime) {
+    info.lastRunTime = lastRunTime;
   }
   // Accept the "Last Result" locale/version variant to avoid false unknown status (#47726).
-  const lastRunResult = entries["last run result"] ?? entries["last result"];
+  // Also accept localized schtasks labels (Japanese Windows labels the numeric
+  // result row 前回の結果) so non-English installs don't fall back to unknown.
+  const lastRunResult =
+    entries["last run result"] ?? entries["last result"] ?? entries["前回の結果"];
   if (lastRunResult) {
     info.lastRunResult = lastRunResult;
   }

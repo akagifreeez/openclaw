@@ -153,6 +153,36 @@ describe("scheduled task runtime derivation", () => {
       detail: "Task status is locale-dependent and no numeric Last Run Result was available.",
     });
   });
+
+  it("parses Japanese-locale key labels and derives stopped from result code", async () => {
+    await expect(
+      readRuntimeFromQueryOutput(
+        [
+          "タスク名:                             \\OpenClaw Gateway",
+          "状態:                                 準備完了",
+          "前回の実行時刻:                       2026/09/03 1:23:45",
+          "前回の結果:                           0",
+          "",
+        ].join("\r\n"),
+      ),
+    ).resolves.toMatchObject({
+      status: "stopped",
+      detail: "Task Last Run Result=0; treating as not running.",
+    });
+  });
+
+  it("detects running via result code when key labels are Japanese", async () => {
+    await expect(
+      readRuntimeFromQueryOutput(
+        [
+          "タスク名:                             \\OpenClaw Gateway",
+          "状態:                                 実行中",
+          "前回の結果:                           267009",
+          "",
+        ].join("\r\n"),
+      ),
+    ).resolves.toMatchObject({ status: "running" });
+  });
 });
 
 describe("resolveTaskScriptPath", () => {
