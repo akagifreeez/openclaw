@@ -4,12 +4,12 @@
 import { spawnSync } from "node:child_process";
 import { getWindowsPowerShellExePath } from "../infra/windows-install-roots.js";
 
-export type ScheduledTaskStateProbe =
+type ScheduledTaskStateProbe =
   | { status: "found"; state: number | null }
   | { status: "missing" }
   | { status: "unknown" };
 
-export function probeScheduledTaskState(taskName: string): ScheduledTaskStateProbe {
+function probeScheduledTaskState(taskName: string): ScheduledTaskStateProbe {
   const encodedTaskName = Buffer.from(taskName, "utf8").toString("base64");
   const script = [
     "$ErrorActionPreference='Stop'",
