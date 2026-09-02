@@ -14,7 +14,16 @@ const schtasksResponses = vi.hoisted(
   (): Array<{ code: number; stdout: string; stderr: string }> => [],
 );
 const resolveWindowsOemEncodingMock = vi.hoisted(() => vi.fn((): string | null => null));
+// The COM state probe's result depends on the host's scheduled tasks, so it is
+// mocked at the module boundary to keep tests deterministic on any machine.
+const taskDefinitelyNotRunningMock = vi.hoisted(() => vi.fn((_taskName: string): boolean => false));
 
+vi.mock("./schtasks-com-state.js", () => ({
+  probeScheduledTaskState: vi.fn(),
+  probeScheduledTaskExists: vi.fn((): boolean | null => null),
+  isScheduledTaskDefinitelyNotRunning: (taskName: string): boolean =>
+    taskDefinitelyNotRunningMock(taskName),
+}));
 vi.mock("./schtasks-exec.js", () => ({
   execSchtasks: async () => schtasksResponses.shift() ?? { code: 0, stdout: "", stderr: "" },
 }));
@@ -34,6 +43,9 @@ beforeEach(() => {
   schtasksResponses.length = 0;
   resolveWindowsOemEncodingMock.mockReset();
   resolveWindowsOemEncodingMock.mockReturnValue(null);
+  // Default: the probe cannot prove the task is not running (deterministic).
+  taskDefinitelyNotRunningMock.mockReset();
+  taskDefinitelyNotRunningMock.mockReturnValue(false);
 });
 
 describe("scheduled task runtime derivation", () => {
@@ -154,34 +166,53 @@ describe("scheduled task runtime derivation", () => {
     });
   });
 
-  it("parses Japanese-locale key labels and derives stopped from result code", async () => {
+  it("treats localized status as stopped when the state probe proves not running (READY)", async () => {
+    taskDefinitelyNotRunningMock.mockReturnValue(true);
     await expect(
-      readRuntimeFromQueryOutput(
-        [
-          "タスク名:                             \\OpenClaw Gateway",
-          "状態:                                 準備完了",
-          "前回の実行時刻:                       2026/09/03 1:23:45",
-          "前回の結果:                           0",
-          "",
-        ].join("\r\n"),
-      ),
+      readRuntimeFromQueryOutput(taskQueryOutput(["Status: Wird ausgeführt"])),
     ).resolves.toMatchObject({
       status: "stopped",
-      detail: "Task Last Run Result=0; treating as not running.",
+      state: "Wird ausgeführt",
+      detail:
+        "Locale-independent task state probe reports READY/DISABLED; treating as not running.",
     });
   });
 
-  it("detects running via result code when key labels are Japanese", async () => {
+  it("treats Japanese status without numeric result as stopped via the state probe", async () => {
+    taskDefinitelyNotRunningMock.mockReturnValue(true);
     await expect(
       readRuntimeFromQueryOutput(
         [
           "タスク名:                             \\OpenClaw Gateway",
           "状態:                                 実行中",
-          "前回の結果:                           267009",
+          "前回の実行時刻:                       2026/09/03 1:23:45",
           "",
         ].join("\r\n"),
       ),
-    ).resolves.toMatchObject({ status: "running" });
+    ).resolves.toMatchObject({
+      status: "stopped",
+    });
+  });
+
+  it("keeps unknown when the state probe reports a running scheduler state", async () => {
+    // TASK_STATE_RUNNING (4) does not prove the instance exited, so no stopped downgrade.
+    taskDefinitelyNotRunningMock.mockReturnValue(false);
+    await expect(
+      readRuntimeFromQueryOutput(taskQueryOutput(["Status: Wird ausgeführt"])),
+    ).resolves.toMatchObject({
+      status: "unknown",
+      detail: "Task status is locale-dependent and no numeric Last Run Result was available.",
+    });
+  });
+
+  it("keeps unknown when the state probe cannot classify the task", async () => {
+    taskDefinitelyNotRunningMock.mockReturnValue(false);
+    await expect(
+      readRuntimeFromQueryOutput(taskQueryOutput(["Status: Wird ausgeführt"])),
+    ).resolves.toMatchObject({
+      status: "unknown",
+      detail: "Task status is locale-dependent and no numeric Last Run Result was available.",
+    });
   });
 });
 

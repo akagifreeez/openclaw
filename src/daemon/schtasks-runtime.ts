@@ -12,6 +12,10 @@ import { sleep } from "../utils.js";
 import { resolveGatewayServiceProbeHosts } from "./gateway-service-probe-hosts.js";
 import { formatLine } from "./output.js";
 import { parseKeyValueOutput } from "./runtime-parse.js";
+import {
+  isScheduledTaskDefinitelyNotRunning,
+  probeScheduledTaskExists,
+} from "./schtasks-com-state.js";
 import { execSchtasks } from "./schtasks-exec.js";
 import {
   readScheduledTaskCommand,
@@ -41,6 +45,11 @@ import type {
   GatewayServiceRestartResult,
 } from "./service-types.js";
 import { WINDOWS_TASK_SUPERVISOR_FLAG } from "./windows-task-supervisor-contract.js";
+
+export {
+  isScheduledTaskDefinitelyNotRunning,
+  probeScheduledTaskExists,
+} from "./schtasks-com-state.js";
 
 type ScheduledTaskInfo = {
   status?: string;
@@ -94,6 +103,8 @@ const RUNNING_RESULT_CODES = new Set(["0x41301"]);
 export const NOT_YET_RUN_RESULT_CODES = new Set(["0x41303"]);
 const UNKNOWN_STATUS_DETAIL =
   "Task status is locale-dependent and no numeric Last Run Result was available.";
+const TASK_STATE_PROBE_STOPPED_DETAIL =
+  "Locale-independent task state probe reports READY/DISABLED; treating as not running.";
 export const SCHEDULED_TASK_FALLBACK_POLL_MS = 250;
 export const SCHEDULED_TASK_FALLBACK_TIMEOUT_MS = 15_000;
 
@@ -378,60 +389,6 @@ export async function resolveFallbackRuntime(
   };
 }
 
-type ScheduledTaskStateProbe =
-  | { status: "found"; state: number | null }
-  | { status: "missing" }
-  | { status: "unknown" };
-
-function probeScheduledTaskState(taskName: string): ScheduledTaskStateProbe {
-  const encodedTaskName = Buffer.from(taskName, "utf8").toString("base64");
-  const script = [
-    "$ErrorActionPreference='Stop'",
-    `$taskName=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedTaskName}'))`,
-    "try { $service=New-Object -ComObject 'Schedule.Service'; $service.Connect(); $task=$service.GetFolder('\\').GetTask($taskName); [Console]::Out.Write([int]$task.State); exit 0 } catch { $exception=$_.Exception; while($null -ne $exception.InnerException){$exception=$exception.InnerException}; [Console]::Out.Write($exception.HResult); exit 1 }",
-  ].join("; ");
-  const probe = spawnSync(
-    getWindowsPowerShellExePath(),
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
-      Buffer.from(script, "utf16le").toString("base64"),
-    ],
-    { encoding: "utf8", timeout: 5_000, windowsHide: true },
-  );
-  if (probe.error) {
-    return { status: "unknown" };
-  }
-  if (probe.status === 0) {
-    const rawState = probe.stdout.trim();
-    const state = /^\d+$/.test(rawState) ? Number.parseInt(rawState, 10) : null;
-    return {
-      status: "found",
-      state,
-    };
-  }
-  const hresult = Number.parseInt(probe.stdout.trim(), 10);
-  // Only the locale-independent missing task/folder HRESULT values prove absence.
-  return hresult === -2147024894 || hresult === -2147024893
-    ? { status: "missing" }
-    : { status: "unknown" };
-}
-
-export function probeScheduledTaskExists(taskName: string): boolean | null {
-  const probe = probeScheduledTaskState(taskName);
-  return probe.status === "found" ? true : probe.status === "missing" ? false : null;
-}
-
-export function isScheduledTaskDefinitelyNotRunning(taskName: string): boolean {
-  const probe = probeScheduledTaskState(taskName);
-  if (probe.status !== "found") {
-    return false;
-  }
-  // TASK_STATE_DISABLED and TASK_STATE_READY both prove no instance is queued or running.
-  return probe.state === 1 || probe.state === 3;
-}
-
 export async function readWindowsStartupFallbackRuntimeForUpdate(
   env: GatewayServiceEnv,
 ): Promise<GatewayServiceRuntime | null> {
@@ -568,7 +525,14 @@ export async function readScheduledTaskRuntime(
   }
   const parsed = parseSchtasksQuery(res.stdout || "");
   const derived = deriveScheduledTaskRuntimeStatus(parsed);
-  if (derived.status !== "running") {
+  // Localized schtasks labels can leave the query output unclassifiable, but the
+  // locale-independent COM state probe still proves READY/DISABLED — no instance
+  // is queued or running on the scheduler side.
+  const probedStopped =
+    derived.status === "unknown" && isScheduledTaskDefinitelyNotRunning(taskName);
+  const status = probedStopped ? "stopped" : derived.status;
+  const detail = probedStopped ? TASK_STATE_PROBE_STOPPED_DETAIL : derived.detail;
+  if (status !== "running") {
     const observedRuntime = await resolveListenerBackedScheduledTaskRuntime(env);
     if (observedRuntime) {
       return {
@@ -580,10 +544,10 @@ export async function readScheduledTaskRuntime(
     }
   }
   return {
-    status: derived.status,
+    status,
     state: parsed.status,
     lastRunTime: parsed.lastRunTime,
     lastRunResult: parsed.lastRunResult,
-    ...(derived.detail ? { detail: derived.detail } : {}),
+    ...(detail ? { detail } : {}),
   };
 }

@@ -385,7 +385,9 @@ describe("Scheduled Task stop/restart cleanup", () => {
         ["/Query", "/TN", "OpenClaw Gateway"],
         ["/End", "/TN", "OpenClaw Gateway"],
       ]);
-      expect(spawnSync).toHaveBeenCalledOnce();
+      // One probe from readScheduledTaskRuntime (empty query output → unknown) plus
+      // one probe from the localized /End failure check.
+      expect(spawnSync).toHaveBeenCalledTimes(2);
       expect(onMutation).toHaveBeenCalledWith({ mode: "schtasks-stop" });
     });
   });
