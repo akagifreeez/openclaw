@@ -194,6 +194,25 @@ describe("scheduled task runtime derivation", () => {
     });
   });
 
+  it("does not classify localized numeric result rows; stays unknown without probe proof", async () => {
+    // 前回の結果: 0 must not be read as a numeric Last Run Result: the COM probe
+    // alone decides, and without READY/DISABLED proof the result stays unknown.
+    taskDefinitelyNotRunningMock.mockReturnValue(false);
+    await expect(
+      readRuntimeFromQueryOutput(
+        [
+          "タスク名:                             \\OpenClaw Gateway",
+          "状態:                                 実行中",
+          "前回の実行時刻:                       2026/09/03 1:23:45",
+          "前回の結果:                           0",
+          "",
+        ].join("\r\n"),
+      ),
+    ).resolves.toMatchObject({
+      status: "unknown",
+    });
+  });
+
   it("keeps unknown when the state probe reports a running scheduler state", async () => {
     // TASK_STATE_RUNNING (4) does not prove the instance exited, so no stopped downgrade.
     taskDefinitelyNotRunningMock.mockReturnValue(false);
