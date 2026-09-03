@@ -853,7 +853,7 @@ function normalizeSystemdUnit(raw?: string, profile?: string): string {
   return unit.endsWith(".service") ? unit : `${unit}.service`;
 }
 
-export function triggerOpenClawRestart(): RestartAttempt {
+export function triggerOpenClawRestart(extraEnv?: NodeJS.ProcessEnv): RestartAttempt {
   if (process.env.VITEST || process.env.NODE_ENV === "test") {
     return { ok: true, method: "supervisor", detail: "test mode" };
   }
@@ -892,7 +892,10 @@ export function triggerOpenClawRestart(): RestartAttempt {
   }
 
   if (process.platform === "win32") {
-    return relaunchGatewayScheduledTask(process.env);
+    // extraEnv carries the gateway restart handoff context (predecessor pid,
+    // successor health endpoint) so the detached helper can verify the
+    // successor instead of fire-and-forgetting the scheduled task (#137266).
+    return relaunchGatewayScheduledTask(extraEnv ? { ...process.env, ...extraEnv } : process.env);
   }
 
   if (process.platform !== "darwin") {

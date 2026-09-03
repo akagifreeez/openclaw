@@ -43,7 +43,7 @@ function rewritePnpmVersionedOpenClawEntryPath(entryPath: string): string {
  *   custom supervisors keep tracking the same gateway PID
  */
 export function restartGatewayProcessWithFreshPid(
-  _opts: GatewayRespawnOptions = {},
+  opts: GatewayRespawnOptions = {},
 ): GatewayRespawnResult {
   if (isTruthyEnvValue(process.env.OPENCLAW_NO_RESPAWN)) {
     return { mode: "disabled" };
@@ -60,7 +60,7 @@ export function restartGatewayProcessWithFreshPid(
         : { mode: "failed", detail: handoff.error };
     }
     if (supervisor === "schtasks") {
-      const restart = triggerOpenClawRestart();
+      const restart = triggerOpenClawRestart(opts.env);
       if (!restart.ok) {
         return {
           mode: "failed",

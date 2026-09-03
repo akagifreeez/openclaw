@@ -15,6 +15,17 @@ import { encodeWindowsLauncherScript } from "./windows-launcher-encoding.js";
 
 const TASK_RESTART_RETRY_LIMIT = 12;
 const TASK_RESTART_RETRY_DELAY_SEC = 1;
+// The predecessor gateway process needs time to finish its own log-flush exit;
+// treat a still-running task instance as "predecessor" only while that pid is
+// alive so the handoff never mistakes its own predecessor for a successor.
+const PREDECESSOR_WAIT_LIMIT = 60;
+const PREDECESSOR_WAIT_DELAY_SEC = 1;
+// Successor readiness: the relaunched gateway binds its health port during
+// startup; a successor that never listens within this budget is a failed
+// handoff and must fall back instead of silently ending the restart.
+const SUCCESSOR_READINESS_PROBE_LIMIT = 90;
+const SUCCESSOR_READINESS_PROBE_DELAY_SEC = 2;
+const SUCCESSOR_READINESS_CONNECT_TIMEOUT_MS = 2000;
 
 function quotePowerShellSingleQuotedLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -28,13 +39,66 @@ function resolveWindowsTaskName(env: NodeJS.ProcessEnv): string {
   return resolveGatewayWindowsTaskName(env.OPENCLAW_PROFILE);
 }
 
+/**
+ * Health endpoint the successor gateway is expected to bind. Only numeric
+ * ports and hostnames without shell/PowerShell metacharacters are accepted;
+ * anything else disables the readiness probe rather than risking injection
+ * into the generated cmd script.
+ */
+function resolveRestartHealthEndpoint(
+  env: NodeJS.ProcessEnv,
+): { host: string; port: number } | null {
+  const rawPort = env.OPENCLAW_RESTART_HEALTH_PORT?.trim();
+  if (!/^\d{1,5}$/.test(rawPort ?? "")) {
+    return null;
+  }
+  const port = Number(rawPort);
+  if (port <= 0 || port > 65535) {
+    return null;
+  }
+  const host = (env.OPENCLAW_RESTART_HEALTH_HOST?.trim() || "127.0.0.1").toLowerCase();
+  if (!/^[a-z0-9._:-]+$/.test(host)) {
+    return null;
+  }
+  return { host, port };
+}
+
+function resolvePredecessorPid(env: NodeJS.ProcessEnv): number | null {
+  const raw = env.OPENCLAW_RESTART_PREDECESSOR_PID?.trim();
+  if (!/^\d{1,10}$/.test(raw ?? "")) {
+    return null;
+  }
+  const pid = Number(raw);
+  return pid > 0 ? pid : null;
+}
+
+function buildPredecessorAliveCommand(predecessorPid: number): string {
+  return [
+    `if (Get-Process -Id ${predecessorPid} -ErrorAction SilentlyContinue) { exit 0 }`,
+    "exit 1",
+  ].join("; ");
+}
+
+function buildSuccessorReadinessCommand(host: string, port: number): string {
+  // Deliberately no try/catch: a synchronous BeginConnect failure makes
+  // powershell exit non-zero, which the caller reads as "not ready yet".
+  return [
+    "$c = New-Object Net.Sockets.TcpClient",
+    `$a = $c.BeginConnect(${quotePowerShellSingleQuotedLiteral(host)}, ${port}, $null, $null)`,
+    `if ($a.AsyncWaitHandle.WaitOne(${SUCCESSOR_READINESS_CONNECT_TIMEOUT_MS}) -and $c.Connected) { exit 0 }`,
+    "exit 1",
+  ].join("; ");
+}
+
 function buildScheduledTaskRestartScript(params: {
   quotedLogPath: string;
   setupLines: string[];
   taskName: string;
   taskScriptPath?: string;
+  predecessorPid?: number;
+  health?: { host: string; port: number } | null;
 }): string {
-  const { quotedLogPath, setupLines, taskName, taskScriptPath } = params;
+  const { quotedLogPath, setupLines, taskName, taskScriptPath, predecessorPid, health } = params;
   const quotedTaskName = quoteCmdScriptArg(taskName);
   const queryTaskStateCommand = [
     `$task = Get-ScheduledTask -TaskName ${quotePowerShellSingleQuotedLiteral(taskName)} -ErrorAction SilentlyContinue`,
@@ -42,6 +106,12 @@ function buildScheduledTaskRestartScript(params: {
     "exit 1",
   ].join("; ");
   const quotedQueryTaskStateCommand = quoteCmdScriptArg(queryTaskStateCommand);
+  const quotedPredecessorAliveCommand = predecessorPid
+    ? quoteCmdScriptArg(buildPredecessorAliveCommand(predecessorPid))
+    : null;
+  const quotedReadinessCommand = health
+    ? quoteCmdScriptArg(buildSuccessorReadinessCommand(health.host, health.port))
+    : null;
   const lines = [
     "@echo off",
     "setlocal",
@@ -49,20 +119,65 @@ function buildScheduledTaskRestartScript(params: {
     `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart attempt source=windows-task-handoff target=${quotedTaskName}`,
     `schtasks /Query /TN ${quotedTaskName} >> ${quotedLogPath} 2>&1`,
     "if errorlevel 1 goto fallback",
+  ];
+  if (quotedPredecessorAliveCommand) {
+    // Wait for this handoff's own predecessor pid to exit before treating a
+    // running task instance as a successor started by someone else (#137266).
+    lines.push(
+      "set /a predwaits=0",
+      ":waitpred",
+      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotedPredecessorAliveCommand} >nul 2>&1`,
+      "if errorlevel 1 goto starttask",
+      `if %predwaits% GEQ ${PREDECESSOR_WAIT_LIMIT} (`,
+      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart note source=windows-task-handoff predecessor-still-alive-after-wait`,
+      ")",
+      "goto starttask",
+      `timeout /t ${PREDECESSOR_WAIT_DELAY_SEC} /nobreak >nul`,
+      "set /a predwaits+=1",
+      "goto waitpred",
+    );
+  }
+  lines.push(
+    ":starttask",
     "set /a attempts=0",
     ":retry",
     `timeout /t ${TASK_RESTART_RETRY_DELAY_SEC} /nobreak >nul`,
     "set /a attempts+=1",
-    // Avoid racing with another restart path that already started the scheduled task.
+    // After the predecessor exited, a running task instance is a successor
+    // started by another restart path; skip straight to readiness probing.
     `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotedQueryTaskStateCommand} >nul 2>&1`,
-    "if not errorlevel 1 goto cleanup",
+    "if not errorlevel 1 goto readiness",
     `schtasks /Run /TN ${quotedTaskName} >> ${quotedLogPath} 2>&1`,
-    "if not errorlevel 1 goto cleanup",
+    "if not errorlevel 1 goto readiness",
     `if %attempts% GEQ ${TASK_RESTART_RETRY_LIMIT} goto fallback`,
     "goto retry",
+  );
+  if (quotedReadinessCommand) {
+    lines.push(
+      ":readiness",
+      "set /a probes=0",
+      ":probe",
+      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotedReadinessCommand} >nul 2>&1`,
+      "if not errorlevel 1 goto recovered",
+      `if %probes% GEQ ${SUCCESSOR_READINESS_PROBE_LIMIT} goto fallback`,
+      `timeout /t ${SUCCESSOR_READINESS_PROBE_DELAY_SEC} /nobreak >nul`,
+      "set /a probes+=1",
+      "goto probe",
+      ":recovered",
+      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=recovered`,
+      "goto cleanup",
+    );
+  } else {
+    lines.push(
+      ":readiness",
+      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=started-unverified`,
+      "goto cleanup",
+    );
+  }
+  lines.push(
     ":fallback",
     `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart fallback source=windows-task-handoff`,
-  ];
+  );
   if (taskScriptPath) {
     const quotedScript = quoteCmdScriptArg(taskScriptPath);
     const quotedCmd = quoteCmdScriptArg(getWindowsCmdExePath());
@@ -70,6 +185,22 @@ function buildScheduledTaskRestartScript(params: {
       `if exist ${quotedScript} (`,
       `  start "" /min ${quotedCmd} /d /c ${quotedScript}`,
       ")",
+    );
+  }
+  if (quotedReadinessCommand) {
+    // The direct-launch fallback gets its own bounded readiness pass so a
+    // failed handoff leaves a durable outcome instead of a silent outage.
+    lines.push(
+      "set /a probes=0",
+      ":fallbackprobe",
+      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotedReadinessCommand} >nul 2>&1`,
+      "if not errorlevel 1 goto recovered",
+      `if %probes% GEQ ${SUCCESSOR_READINESS_PROBE_LIMIT} goto handofffailed`,
+      `timeout /t ${SUCCESSOR_READINESS_PROBE_DELAY_SEC} /nobreak >nul`,
+      "set /a probes+=1",
+      "goto fallbackprobe",
+      ":handofffailed",
+      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=failed-successor-not-ready`,
     );
   }
   lines.push(
@@ -83,6 +214,8 @@ function buildScheduledTaskRestartScript(params: {
 export function relaunchGatewayScheduledTask(env: NodeJS.ProcessEnv = process.env): RestartAttempt {
   const taskName = resolveWindowsTaskName(env);
   const taskScriptPath = resolveTaskScriptPath(env);
+  const predecessorPid = resolvePredecessorPid(env);
+  const health = resolveRestartHealthEndpoint(env);
   const scriptPath = path.join(
     resolvePreferredOpenClawTmpDir(),
     `openclaw-schtasks-restart-${randomUUID()}.cmd`,
@@ -101,6 +234,8 @@ export function relaunchGatewayScheduledTask(env: NodeJS.ProcessEnv = process.en
           setupLines: restartLog.lines,
           taskName,
           taskScriptPath,
+          predecessorPid: predecessorPid ?? undefined,
+          health,
         })}\r\n`,
       }),
     );

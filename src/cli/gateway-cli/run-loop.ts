@@ -386,7 +386,16 @@ export async function runGatewayLoop(params: {
     }
 
     const respawnOptions = {
-      env: createGatewayRestartTraceHandoffEnv(captureGatewayRestartTraceHandoff()),
+      env: {
+        ...createGatewayRestartTraceHandoffEnv(captureGatewayRestartTraceHandoff()),
+        // Hand the detached scheduled-task helper what it needs to wait out
+        // this predecessor and verify the successor reaches readiness (#137266).
+        OPENCLAW_RESTART_PREDECESSOR_PID: String(process.pid),
+        ...(typeof params.lockPort === "number" && {
+          OPENCLAW_RESTART_HEALTH_PORT: String(params.lockPort),
+          OPENCLAW_RESTART_HEALTH_HOST: params.healthHost ?? "127.0.0.1",
+        }),
+      },
     };
     const isStandaloneUpdate = isUpdateRestart && !supervisorMode;
     const respawn = isStandaloneUpdate
