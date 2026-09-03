@@ -90,6 +90,40 @@ function buildSuccessorReadinessCommand(host: string, port: number): string {
   ].join("; ");
 }
 
+/**
+ * One bounded successor-readiness poll loop, shared by the scheduled-task
+ * path and the direct-launch fallback so the probe, budget, and outcome
+ * lines cannot drift apart. Readiness only passes when the successor's own
+ * listener answers the probe; a still-live predecessor holding the port
+ * must not satisfy it.
+ */
+function buildReadinessPollLines(params: {
+  quotedLogPath: string;
+  quotedReadinessCommand: string;
+  entryLabel?: string;
+  probeLabel: string;
+  budgetExitLabel: string;
+  exitLabel: string;
+  exitOutcome: string;
+  tailLines: string[];
+}): string[] {
+  const probeLine = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${params.quotedReadinessCommand} >nul 2>&1`;
+  return [
+    ...(params.entryLabel ? [params.entryLabel] : []),
+    "set /a probes=0",
+    `:${params.probeLabel}`,
+    probeLine,
+    "if not errorlevel 1 goto recovered",
+    `if %probes% GEQ ${SUCCESSOR_READINESS_PROBE_LIMIT} goto ${params.budgetExitLabel}`,
+    `timeout /t ${SUCCESSOR_READINESS_PROBE_DELAY_SEC} /nobreak >nul`,
+    "set /a probes+=1",
+    `goto ${params.probeLabel}`,
+    `:${params.exitLabel}`,
+    params.exitOutcome,
+    ...params.tailLines,
+  ];
+}
+
 function buildScheduledTaskRestartScript(params: {
   quotedLogPath: string;
   setupLines: string[];
@@ -156,18 +190,16 @@ function buildScheduledTaskRestartScript(params: {
   );
   if (quotedReadinessCommand) {
     lines.push(
-      ":readiness",
-      "set /a probes=0",
-      ":probe",
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotedReadinessCommand} >nul 2>&1`,
-      "if not errorlevel 1 goto recovered",
-      `if %probes% GEQ ${SUCCESSOR_READINESS_PROBE_LIMIT} goto fallback`,
-      `timeout /t ${SUCCESSOR_READINESS_PROBE_DELAY_SEC} /nobreak >nul`,
-      "set /a probes+=1",
-      "goto probe",
-      ":recovered",
-      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=recovered`,
-      "goto cleanup",
+      ...buildReadinessPollLines({
+        quotedLogPath,
+        quotedReadinessCommand,
+        entryLabel: ":readiness",
+        probeLabel: "probe",
+        budgetExitLabel: "fallback",
+        exitLabel: "recovered",
+        exitOutcome: `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=recovered`,
+        tailLines: ["goto cleanup"],
+      }),
     );
   } else {
     lines.push(
@@ -193,16 +225,15 @@ function buildScheduledTaskRestartScript(params: {
     // The direct-launch fallback gets its own bounded readiness pass so a
     // failed handoff leaves a durable outcome instead of a silent outage.
     lines.push(
-      "set /a probes=0",
-      ":fallbackprobe",
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotedReadinessCommand} >nul 2>&1`,
-      "if not errorlevel 1 goto recovered",
-      `if %probes% GEQ ${SUCCESSOR_READINESS_PROBE_LIMIT} goto handofffailed`,
-      `timeout /t ${SUCCESSOR_READINESS_PROBE_DELAY_SEC} /nobreak >nul`,
-      "set /a probes+=1",
-      "goto fallbackprobe",
-      ":handofffailed",
-      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=failed-successor-not-ready`,
+      ...buildReadinessPollLines({
+        quotedLogPath,
+        quotedReadinessCommand,
+        probeLabel: "fallbackprobe",
+        budgetExitLabel: "handofffailed",
+        exitLabel: "handofffailed",
+        exitOutcome: `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=failed-successor-not-ready`,
+        tailLines: [],
+      }),
     );
   }
   lines.push(
