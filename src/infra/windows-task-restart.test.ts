@@ -214,6 +214,29 @@ describe("relaunchGatewayScheduledTask", () => {
     // predecessor can no longer be mistaken for an already-started successor.
     expect(script.indexOf(":waitpred")).toBeLessThan(script.indexOf("Get-ScheduledTask"));
     expect(script).toContain(":starttask");
+    // Pin the wait-loop control flow: the only ways out of :waitpred are a
+    // dead predecessor (errorlevel branch) or the budget expiring *inside*
+    // the GEQ block. A live predecessor must loop through sleep/increment and
+    // re-probe instead of falling through to :starttask. Regression guard for
+    // an unconditional `goto starttask` after the budget check that made the
+    // loop unreachable, letting the handoff treat a still-running predecessor
+    // as a successor (found by native-trace review of this PR).
+    const waitBlock = script.slice(script.indexOf(":waitpred"), script.indexOf(":starttask"));
+    const budgetCheck = waitBlock.indexOf("if %predwaits% GEQ 60 (");
+    const budgetBlockEnd = waitBlock.indexOf(")", budgetCheck);
+    expect(budgetCheck).toBeGreaterThan(-1);
+    expect(budgetBlockEnd).toBeGreaterThan(budgetCheck);
+    expect(waitBlock.slice(budgetCheck, budgetBlockEnd)).toContain("goto starttask");
+    const outsideBudgetBlock = waitBlock.slice(0, budgetCheck) + waitBlock.slice(budgetBlockEnd);
+    const standaloneExits = outsideBudgetBlock
+      .split("\r\n")
+      .map((line) => line.trim())
+      .filter((line) => line === "goto starttask");
+    expect(standaloneExits).toStrictEqual([]);
+    expect(outsideBudgetBlock).toContain("if errorlevel 1 goto starttask");
+    expect(waitBlock.indexOf("timeout /t 1 /nobreak >nul")).toBeGreaterThan(budgetBlockEnd);
+    expect(waitBlock.indexOf("set /a predwaits+=1")).toBeGreaterThan(budgetBlockEnd);
+    expect(waitBlock.trimEnd().endsWith("goto waitpred")).toBe(true);
     // Without a health endpoint the outcome stays explicit but unverified.
     expect(script).toContain("result=started-unverified");
     expect(script).not.toContain("Net.Sockets.TcpClient");

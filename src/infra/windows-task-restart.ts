@@ -130,8 +130,10 @@ function buildScheduledTaskRestartScript(params: {
       "if errorlevel 1 goto starttask",
       `if %predwaits% GEQ ${PREDECESSOR_WAIT_LIMIT} (`,
       `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart note source=windows-task-handoff predecessor-still-alive-after-wait`,
-      ")",
+      // Give up waiting only when the budget expires; a live predecessor must
+      // stay in this loop instead of falling through to the task start (#137266).
       "goto starttask",
+      ")",
       `timeout /t ${PREDECESSOR_WAIT_DELAY_SEC} /nobreak >nul`,
       "set /a predwaits+=1",
       "goto waitpred",
