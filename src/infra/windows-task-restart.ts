@@ -20,12 +20,15 @@ const TASK_RESTART_RETRY_DELAY_SEC = 1;
 // alive so the handoff never mistakes its own predecessor for a successor.
 const PREDECESSOR_WAIT_LIMIT = 60;
 const PREDECESSOR_WAIT_DELAY_SEC = 1;
-// Successor readiness: the relaunched gateway binds its health port during
-// startup; a successor that never listens within this budget is a failed
-// handoff and must fall back instead of silently ending the restart.
+// Successor readiness: the relaunched gateway serves its unauthenticated
+// /healthz contract during startup; a successor that never answers within
+// this budget is a failed handoff and must fall back instead of silently
+// ending the restart.
 const SUCCESSOR_READINESS_PROBE_LIMIT = 90;
 const SUCCESSOR_READINESS_PROBE_DELAY_SEC = 2;
 const SUCCESSOR_READINESS_CONNECT_TIMEOUT_MS = 2000;
+// Gateway /healthz contract verified by the successor probe before recovery.
+const SUCCESSOR_READINESS_TIMEOUT_SEC = Math.round(SUCCESSOR_READINESS_CONNECT_TIMEOUT_MS / 1000);
 
 function quotePowerShellSingleQuotedLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -80,12 +83,20 @@ function buildPredecessorAliveCommand(predecessorPid: number): string {
 }
 
 function buildSuccessorReadinessCommand(host: string, port: number): string {
-  // Deliberately no try/catch: a synchronous BeginConnect failure makes
-  // powershell exit non-zero, which the caller reads as "not ready yet".
+  // Raw TCP reachability only proves that something listens on the port; the
+  // successor contract is the gateway's own unauthenticated /healthz response
+  // (200 with {"ok":true,"status":"live"}), so recovery requires that exact
+  // shape and an unrelated listener squatting on the port cannot satisfy it.
+  // IPv6 literals must be bracketed before they are embedded in the URI.
+  const uriHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const healthUri = `http://${uriHost}:${port}/healthz`;
+  // Deliberately no try/catch: connection failures, timeouts, non-2xx status
+  // codes, and non-JSON bodies all throw (or miss the ok/live contract) and
+  // make powershell exit non-zero, which the caller reads as "not ready yet".
   return [
-    "$c = New-Object Net.Sockets.TcpClient",
-    `$a = $c.BeginConnect(${quotePowerShellSingleQuotedLiteral(host)}, ${port}, $null, $null)`,
-    `if ($a.AsyncWaitHandle.WaitOne(${SUCCESSOR_READINESS_CONNECT_TIMEOUT_MS}) -and $c.Connected) { exit 0 }`,
+    `$r = Invoke-WebRequest -UseBasicParsing -Uri ${quotePowerShellSingleQuotedLiteral(healthUri)} -TimeoutSec ${SUCCESSOR_READINESS_TIMEOUT_SEC}`,
+    "$j = $r.Content | ConvertFrom-Json",
+    "if ($r.StatusCode -eq 200 -and $j.ok -eq $true -and $j.status -eq 'live') { exit 0 }",
     "exit 1",
   ].join("; ");
 }
@@ -164,9 +175,12 @@ function buildScheduledTaskRestartScript(params: {
       "if errorlevel 1 goto starttask",
       `if %predwaits% GEQ ${PREDECESSOR_WAIT_LIMIT} (`,
       `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart note source=windows-task-handoff predecessor-still-alive-after-wait`,
-      // Give up waiting only when the budget expires; a live predecessor must
-      // stay in this loop instead of falling through to the task start (#137266).
-      "goto starttask",
+      // A predecessor that outlives the wait budget must never be probed as a
+      // successor: the task-state and readiness checks below could otherwise
+      // observe the still-running predecessor and record a false recovery
+      // (#137266). Record the explicit failure and stop the handoff instead.
+      `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart outcome source=windows-task-handoff result=failed-predecessor-still-alive`,
+      "goto cleanup",
       ")",
       `timeout /t ${PREDECESSOR_WAIT_DELAY_SEC} /nobreak >nul`,
       "set /a predwaits+=1",

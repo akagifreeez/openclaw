@@ -226,7 +226,17 @@ describe("relaunchGatewayScheduledTask", () => {
     const budgetBlockEnd = waitBlock.indexOf(")", budgetCheck);
     expect(budgetCheck).toBeGreaterThan(-1);
     expect(budgetBlockEnd).toBeGreaterThan(budgetCheck);
-    expect(waitBlock.slice(budgetCheck, budgetBlockEnd)).toContain("goto starttask");
+    // When the budget expires the predecessor is still alive, so the handoff
+    // must record an explicit non-recovered outcome and stop. Falling into
+    // :starttask here would let the task-state and readiness probes observe
+    // the still-running predecessor and log a false result=recovered.
+    const budgetBlock = waitBlock.slice(budgetCheck, budgetBlockEnd);
+    expect(budgetBlock).toContain("goto cleanup");
+    expect(budgetBlock).toContain("result=failed-predecessor-still-alive");
+    expect(budgetBlock).not.toContain("goto starttask");
+    expect(script).toContain(
+      "openclaw restart outcome source=windows-task-handoff result=failed-predecessor-still-alive",
+    );
     const outsideBudgetBlock = waitBlock.slice(0, budgetCheck) + waitBlock.slice(budgetBlockEnd);
     const standaloneExits = outsideBudgetBlock
       .split("\r\n")
@@ -239,7 +249,7 @@ describe("relaunchGatewayScheduledTask", () => {
     expect(waitBlock.trimEnd().endsWith("goto waitpred")).toBe(true);
     // Without a health endpoint the outcome stays explicit but unverified.
     expect(script).toContain("result=started-unverified");
-    expect(script).not.toContain("Net.Sockets.TcpClient");
+    expect(script).not.toContain("Invoke-WebRequest");
   });
 
   it("probes successor readiness before declaring recovery (#137266)", () => {
@@ -262,9 +272,17 @@ describe("relaunchGatewayScheduledTask", () => {
     const script = fs.readFileSync(scriptPath, "utf8");
     expect(script).toContain(":readiness");
     expect(script).toContain(":probe");
-    expect(script).toContain("Net.Sockets.TcpClient");
-    expect(script).toContain("$a = $c.BeginConnect('127.0.0.1', 18789, $null, $null)");
-    expect(script).toContain("$a.AsyncWaitHandle.WaitOne(2000)");
+    // Readiness is the gateway /healthz contract, not raw TCP reachability:
+    // 200 plus the {"ok":true,"status":"live"} body, so an unrelated listener
+    // occupying the port cannot satisfy the probe.
+    expect(script).toContain("Invoke-WebRequest");
+    expect(script).toContain("-Uri 'http://127.0.0.1:18789/healthz'");
+    expect(script).toContain("-TimeoutSec 2");
+    expect(script).toContain("$j = $r.Content | ConvertFrom-Json");
+    expect(script).toContain(
+      "if ($r.StatusCode -eq 200 -and $j.ok -eq $true -and $j.status -eq 'live') { exit 0 }",
+    );
+    expect(script).not.toContain("Net.Sockets.TcpClient");
     expect(script).toContain("if %probes% GEQ 90 goto fallback");
     expect(script).toContain(
       "openclaw restart outcome source=windows-task-handoff result=recovered",
@@ -302,6 +320,7 @@ describe("relaunchGatewayScheduledTask", () => {
     const script = fs.readFileSync(scriptPath, "utf8");
     expect(script).not.toContain(":waitpred");
     expect(script).not.toContain("Get-Process -Id");
+    expect(script).not.toContain("Invoke-WebRequest");
     expect(script).not.toContain("Net.Sockets.TcpClient");
     expect(script).not.toContain("calc");
     expect(script).toContain("result=started-unverified");
@@ -323,7 +342,7 @@ describe("relaunchGatewayScheduledTask", () => {
       "[...createdScriptPaths][0] test invariant",
     );
     const script = fs.readFileSync(scriptPath, "utf8");
-    expect(script).toContain("$a = $c.BeginConnect('127.0.0.1', 18790, $null, $null)");
+    expect(script).toContain("-Uri 'http://127.0.0.1:18790/healthz'");
   });
 
   it("returns failed when the helper cannot be spawned", () => {
